@@ -1,0 +1,12 @@
+Starting Tavily HTTPX Test
+Importing tavily_mcp...
+Import success.
+Running search...
+❌ FAILED: Tavily MCP returned 406: {"jsonrpc":"2.0","id":"server-error","error":{"code":-32600,"message":"Not Acceptable: Client must accept both application/json and text/event-stream"}}
+Traceback (most recent call last):
+  File "C:\Users\Fab2\Desktop\AI\_plasticFlower\scripts\test_tavily_httpx.py", line 29, in run_test
+    response = await tavily_search(
+               ^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Fab2\Desktop\AI\_plasticFlower\backend\app\services\tavily_mcp.py", line 114, in tavily_search
+    raise TavilyMCPError(
+app.services.tavily_mcp.TavilyMCPError: Tavily MCP returned 406: {"jsonrpc":"2.0","id":"server-error","error":{"code":-32600,"message":"Not Acceptable: Client must accept both application/json and text/event-stream"}}

@@ -1,0 +1,39 @@
+[
+  {
+    "text": "The Horizon 2020 programme funded many research projects across Europe.",
+    "start_time": 0.0,
+    "end_time": 8.0,
+    "expected_research": {
+      "type": "funding",
+      "should_find": "European Commission website"
+    }
+  },
+  {
+    "text": "CeADAR is Ireland's national centre for applied artificial intelligence.",
+    "start_time": 8.0,
+    "end_time": 16.0,
+    "expected_research": {
+      "type": "organisation",
+      "should_find": "ceadar.ie"
+    }
+  },
+  {
+    "text": "The Turing Institute in London leads AI research in the UK.",
+    "start_time": 16.0,
+    "end_time": 24.0,
+    "expected_research": {
+      "type": "organisation",
+      "should_find": "turing.ac.uk"
+    }
+  },
+  {
+    "text": "Innovate UK provides funding for technology startups in the UK.",
+    "start_time": 24.0,
+    "end_time": 32.0,
+    "expected_research": {
+      "type": "funding",
+      "should_find": "innovateuk.ukri.org"
+    }
+  }
+]
+

@@ -1,0 +1,947 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Universal Knowledge Graph Viewer</title>
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/js-yaml@4.1.0/dist/js-yaml.min.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #f5f5f5;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        #header {
+            background: #2c3e50;
+            color: white;
+            padding: 15px 20px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+        }
+        
+        #header h1 {
+            font-size: 24px;
+            font-weight: 600;
+            margin-bottom: 10px;
+        }
+        
+        .status-badge {
+            display: inline-block;
+            background: #27ae60;
+            color: white;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            margin-left: 10px;
+            font-weight: 500;
+        }
+        
+        #controls {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+        
+        .control-buttons {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        
+        #filter-panel {
+            margin-top: 12px;
+            background: rgba(255,255,255,0.08);
+            padding: 10px 12px;
+            border-radius: 8px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        
+        .filter-group {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            position: relative;
+        }
+        
+        .filter-label {
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            color: rgba(255,255,255,0.9);
+            font-weight: 600;
+            white-space: nowrap;
+        }
+        
+        .filter-dropdown {
+            position: relative;
+        }
+        
+        .filter-dropdown-button {
+            padding: 8px 30px 8px 12px;
+            background: white;
+            border: 1px solid rgba(255,255,255,0.3);
+            border-radius: 4px;
+            font-size: 13px;
+            color: #2c3e50;
+            cursor: pointer;
+            min-width: 180px;
+            text-align: left;
+            position: relative;
+        }
+        
+        .filter-dropdown-button::after {
+            content: '▼';
+            position: absolute;
+            right: 10px;
+            top: 50%;
+            transform: translateY(-50%);
+            font-size: 10px;
+        }
+        
+        .filter-dropdown-button:hover {
+            border-color: #27ae60;
+        }
+        
+        .filter-dropdown-menu {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            margin-top: 4px;
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            z-index: 1000;
+            min-width: 200px;
+            max-height: 300px;
+            overflow-y: auto;
+            display: none;
+        }
+        
+        .filter-dropdown-menu.show {
+            display: block;
+        }
+        
+        .filter-dropdown-item {
+            padding: 8px 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #2c3e50;
+        }
+        
+        .filter-dropdown-item:hover {
+            background: #f5f5f5;
+        }
+        
+        .filter-dropdown-item input[type="checkbox"] {
+            cursor: pointer;
+            accent-color: #27ae60;
+        }
+        
+        .filter-dropdown-item label {
+            cursor: pointer;
+            flex: 1;
+        }
+        
+        #search {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 14px;
+            width: 300px;
+        }
+        
+        button {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            background: #3498db;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.3s;
+        }
+        
+        button:hover {
+            background: #2980b9;
+        }
+        
+        #container {
+            display: flex;
+            height: calc(100vh - 100px);
+        }
+        
+        #graph {
+            flex: 1;
+            background: white;
+        }
+        
+        #details-panel {
+            width: 350px;
+            background: white;
+            padding: 20px;
+            padding-bottom: 80px;
+            overflow-y: scroll !important;
+            overflow-x: hidden;
+            box-shadow: -2px 0 10px rgba(0,0,0,0.1);
+            transition: transform 0.3s;
+        }
+        
+        #details-panel::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        #details-panel::-webkit-scrollbar-track {
+            background: #f5f5f5;
+        }
+        
+        #details-panel::-webkit-scrollbar-thumb {
+            background: #bdc3c7;
+            border-radius: 4px;
+        }
+        
+        #details-panel::-webkit-scrollbar-thumb:hover {
+            background: #95a5a6;
+        }
+        
+        #details-panel.hidden {
+            transform: translateX(100%);
+        }
+        
+        #details-panel h2 {
+            font-size: 20px;
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+        
+        .field {
+            margin-bottom: 15px;
+        }
+        
+        .field-label {
+            font-weight: 600;
+            color: #7f8c8d;
+            font-size: 12px;
+            text-transform: uppercase;
+            margin-bottom: 5px;
+        }
+        
+        .field-value {
+            color: #2c3e50;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+        
+        .node-link {
+            color: #3498db;
+            text-decoration: underline;
+            cursor: pointer;
+        }
+        
+        .node-link:hover {
+            color: #2980b9;
+        }
+        
+        .action-button {
+            margin-top: 10px;
+            width: 100%;
+        }
+        
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(255,255,255,0.9);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            font-size: 20px;
+            color: #2c3e50;
+        }
+        
+        .loading-overlay.hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="loading" class="loading-overlay">
+        Loading knowledge graph...
+    </div>
+    
+    <div id="header">
+        <h1 id="graph-title">Knowledge Graph <span id="live-badge" class="status-badge">LIVE</span></h1>
+        <div id="controls">
+            <input type="text" id="search" placeholder="Search...">
+            <div class="control-buttons">
+                <button onclick="resetView()">Reset View</button>
+                <button onclick="reloadData()">Refresh Data</button>
+            </div>
+        </div>
+        <div id="filter-panel">
+            <div class="filter-group">
+                <span class="filter-label">Entity Types:</span>
+                <div id="entity-filter-group"></div>
+            </div>
+            <div class="filter-group">
+                <span class="filter-label">Connection Types:</span>
+                <div id="relationship-filter-group"></div>
+            </div>
+        </div>
+    </div>
+    
+    <div id="container">
+        <div id="graph"></div>
+        <div id="details-panel" class="hidden">
+            <button onclick="closeDetailsPanel()" style="position: absolute; top: 10px; right: 10px; background: none; border: none; font-size: 24px; cursor: pointer; color: #95a5a6;">&times;</button>
+            <h2 id="detail-title">Select a node</h2>
+            <div id="detail-content"></div>
+        </div>
+    </div>
+
+    <script type="text/javascript">
+        // Global configuration
+        let config = null;
+        let COLORS = {};
+        let entityConfig = {};
+        
+        // Global variables
+        let network = null;
+        let nodesDataSet = null;
+        let edgesDataSet = null;
+        let allNodes = [];
+        let allEdges = [];
+        let entitiesData = null;
+        let entityFilterKeys = [];
+        let relationshipFilterKeys = [];
+        let activeEntityTypes = new Set();
+        let activeRelationshipTypes = new Set();
+        let searchTerm = '';
+        
+        // Load and parse config.yaml
+        async function loadConfig() {
+            try {
+                const response = await fetch('config.yaml');
+                if (!response.ok) {
+                    throw new Error(`Failed to load config.yaml: ${response.status}`);
+                }
+                const yamlText = await response.text();
+                const parsedConfig = jsyaml.load(yamlText);
+                return parsedConfig;
+            } catch (error) {
+                console.error('Error loading config:', error);
+                throw error;
+            }
+        }
+        
+        // Initialize configuration
+        async function initializeConfig() {
+            config = await loadConfig();
+            
+            // Extract colors from config
+            if (config.visualization && config.visualization.colors) {
+                COLORS = config.visualization.colors;
+            }
+            
+            // Build entity configuration map
+            if (config.entity_types) {
+                entityConfig = {
+                    primary: config.entity_types.primary,
+                    contributors: config.entity_types.contributors,
+                    sources: config.entity_types.sources
+                };
+            }
+            
+            // Update UI with config
+            const domain = config.domain || 'Knowledge';
+            document.getElementById('graph-title').innerHTML = 
+                `${domain.charAt(0).toUpperCase() + domain.slice(1)} Knowledge Graph <span id="live-badge" class="status-badge">LIVE</span>`;
+            
+            console.log('Configuration loaded:', config);
+        }
+        
+        // Load entities.json dynamically
+        async function loadEntities() {
+            try {
+                const dataPath = config.paths && config.paths.data_dir ? 
+                    `${config.paths.data_dir}/entities.json` : '_data/entities.json';
+                const response = await fetch(dataPath);
+                if (!response.ok) {
+                    throw new Error(`Failed to load entities.json: ${response.status}`);
+                }
+                return await response.json();
+            } catch (error) {
+                console.error('Error loading entities:', error);
+                alert('Failed to load entities.json. Make sure you are running the local server.');
+                throw error;
+            }
+        }
+        
+        // Convert entities to nodes dynamically based on config
+        function createNodes(entities) {
+            const nodes = [];
+            
+            // Process primary entities (components/concepts/elements)
+            if (entityConfig.primary) {
+                const primaryName = entityConfig.primary.name;
+                const primaryEntities = entities[primaryName] || [];
+                
+                for (const entity of primaryEntities) {
+                    const color = COLORS[entity.type] || COLORS.default || "#7f8c8d";
+                    const desc = entity.description || "No description";
+                    const truncDesc = desc.length > 150 ? desc.substring(0, 147) + "..." : desc;
+                    
+                    nodes.push({
+                        id: entity.id,
+                        label: entity.label || entity.name,
+                        title: `<b>${entity.label || entity.name}</b><br>Type: ${entity.type || 'N/A'}<br><br>${truncDesc}`,
+                        color: color,
+                        group: entity.type || primaryName,
+                        shape: "dot",
+                        size: 20,
+                        font: { size: 14 },
+                        nodeType: primaryName,
+                        data: entity
+                    });
+                }
+            }
+            
+            // Process contributors (teams/researchers/stakeholders)
+            if (entityConfig.contributors) {
+                const contributorsName = entityConfig.contributors.name;
+                const contributors = entities[contributorsName] || [];
+                
+                for (const contributor of contributors) {
+                    nodes.push({
+                        id: contributor.id,
+                        label: contributor.name,
+                        title: `<b>${contributor.name}</b><br>${Object.keys(contributor).length} properties`,
+                        color: "#95a5a6",
+                        group: contributorsName,
+                        shape: "box",
+                        size: 15,
+                        font: { size: 12 },
+                        nodeType: contributorsName,
+                        data: contributor
+                    });
+                }
+            }
+            
+            // Process sources (specifications/papers/insights)
+            if (entityConfig.sources) {
+                const sourcesName = entityConfig.sources.name;
+                const sources = entities[sourcesName] || [];
+                
+                for (const source of sources) {
+                    const authorsStr = (source.authors || []).join(", ").substring(0, 50);
+                    const isCurrent = (source.status || '').toLowerCase() === "current" || 
+                                      (source.status || '').toLowerCase() === "analyzed";
+                    
+                    const color = isCurrent
+                        ? { background: "#f1c40f", border: "#95a5a6", highlight: { background: "#f4d03f", border: "#7f8c8d" } }
+                        : { background: "#f39c12", border: "#d68910", highlight: { background: "#f5b041", border: "#f39c12" } };
+                    
+                    nodes.push({
+                        id: source.id,
+                        label: (source.title || source.label || "Untitled").substring(0, 30) + "...",
+                        title: `<b>${source.title || source.label || 'Untitled'}</b><br>Type: ${source.type || 'N/A'}`,
+                        color: color,
+                        group: sourcesName,
+                        shape: "diamond",
+                        size: 18,
+                        borderWidth: 2,
+                        font: { size: 12 },
+                        nodeType: sourcesName,
+                        data: source
+                    });
+                }
+            }
+            
+            return nodes;
+        }
+        
+        // Convert relationships to edges
+        function createEdges(entities) {
+            const edges = [];
+            let edgeCounter = 0;
+            
+            function pushEdge(edge) {
+                edges.push({
+                    id: `edge-${edgeCounter++}`,
+                    relType: edge.relType || edge.label || 'related',
+                    ...edge
+                });
+            }
+            
+            // Process explicit relationships
+            for (const rel of entities.relationships || []) {
+                pushEdge({
+                    from: rel.from,
+                    to: rel.to,
+                    label: rel.type || "related",
+                    relType: rel.type || "related",
+                    title: rel.description || "",
+                    arrows: "to",
+                    color: { color: "#848484", opacity: 0.5 },
+                    width: rel.strength === "strong" ? 2 : 1,
+                    dashes: rel.strength === "weak",
+                    smooth: { type: "curvedCW", roundness: 0.2 }
+                });
+            }
+            
+            // Add implicit relationships from related_to fields
+            if (entityConfig.primary) {
+                const primaryName = entityConfig.primary.name;
+                for (const entity of entities[primaryName] || []) {
+                    for (const relatedId of entity.related_to || []) {
+                        const existing = edges.some(e => e.from === entity.id && e.to === relatedId);
+                        if (!existing) {
+                            pushEdge({
+                                from: entity.id,
+                                to: relatedId,
+                                label: "related",
+                                relType: "related",
+                                arrows: "to",
+                                color: { color: "#cccccc", opacity: 0.3 },
+                                width: 1,
+                                dashes: true,
+                                smooth: { type: "curvedCW", roundness: 0.2 }
+                            });
+                        }
+                    }
+                }
+            }
+            
+            return edges;
+        }
+        
+        // Build filter definitions dynamically
+        function buildFilterDefinitions() {
+            entityFilterKeys = [];
+            
+            // Build entity type filters from config
+            if (entityConfig.primary && (entitiesData[entityConfig.primary.name] || []).length > 0) {
+                entityFilterKeys.push({
+                    key: entityConfig.primary.name,
+                    label: entityConfig.primary.label_plural || entityConfig.primary.name
+                });
+            }
+            if (entityConfig.contributors && (entitiesData[entityConfig.contributors.name] || []).length > 0) {
+                entityFilterKeys.push({
+                    key: entityConfig.contributors.name,
+                    label: entityConfig.contributors.label_plural || entityConfig.contributors.name
+                });
+            }
+            if (entityConfig.sources && (entitiesData[entityConfig.sources.name] || []).length > 0) {
+                entityFilterKeys.push({
+                    key: entityConfig.sources.name,
+                    label: entityConfig.sources.label_plural || entityConfig.sources.name
+                });
+            }
+            
+            activeEntityTypes = new Set(entityFilterKeys.map(def => def.key));
+            
+            // Build relationship type filters
+            const relSet = new Set();
+            for (const rel of entitiesData.relationships || []) {
+                relSet.add(rel.type || 'related');
+            }
+            if (config.relationships && config.relationships.types) {
+                config.relationships.types.forEach(type => relSet.add(type));
+            }
+            
+            relationshipFilterKeys = Array.from(relSet).sort().map(type => ({
+                key: type,
+                label: formatLabel(type)
+            }));
+            activeRelationshipTypes = new Set(relationshipFilterKeys.map(def => def.key));
+        }
+        
+        function formatLabel(text) {
+            if (!text) return 'Unknown';
+            return text.replace(/[-_]/g, ' ').replace(/\b\w/g, char => char.toUpperCase());
+        }
+        
+        function renderFilterControls() {
+            renderFilterDropdown(entityFilterKeys, document.getElementById('entity-filter-group'), activeEntityTypes, 'entity');
+            renderFilterDropdown(relationshipFilterKeys, document.getElementById('relationship-filter-group'), activeRelationshipTypes, 'relationship');
+        }
+        
+        function renderFilterDropdown(items, container, activeSet, type) {
+            if (!container) return;
+            container.innerHTML = '';
+            
+            // Create dropdown wrapper
+            const dropdown = document.createElement('div');
+            dropdown.className = 'filter-dropdown';
+            
+            // Create button
+            const button = document.createElement('button');
+            button.className = 'filter-dropdown-button';
+            button.textContent = `${activeSet.size} selected`;
+            button.onclick = (e) => {
+                e.stopPropagation();
+                // Close other dropdowns
+                document.querySelectorAll('.filter-dropdown-menu').forEach(m => {
+                    if (m !== menu) m.classList.remove('show');
+                });
+                menu.classList.toggle('show');
+            };
+            
+            // Create menu
+            const menu = document.createElement('div');
+            menu.className = 'filter-dropdown-menu';
+            menu.onclick = (e) => {
+                e.stopPropagation(); // Prevent closing when clicking inside menu
+            };
+            
+            // Add "Select All" option
+            const selectAllItem = document.createElement('div');
+            selectAllItem.className = 'filter-dropdown-item';
+            selectAllItem.style.borderBottom = '1px solid #eee';
+            selectAllItem.style.fontWeight = '600';
+            
+            const selectAllCheckbox = document.createElement('input');
+            selectAllCheckbox.type = 'checkbox';
+            selectAllCheckbox.checked = activeSet.size === items.length;
+            selectAllCheckbox.id = `${type}-select-all`;
+            
+            const selectAllLabel = document.createElement('label');
+            selectAllLabel.textContent = 'Select All';
+            selectAllLabel.htmlFor = `${type}-select-all`;
+            
+            selectAllItem.appendChild(selectAllCheckbox);
+            selectAllItem.appendChild(selectAllLabel);
+            
+            selectAllCheckbox.addEventListener('change', () => {
+                if (selectAllCheckbox.checked) {
+                    items.forEach(item => activeSet.add(item.key));
+                    menu.querySelectorAll('input[type="checkbox"]:not(#' + selectAllCheckbox.id + ')').forEach(cb => cb.checked = true);
+                } else if (activeSet.size > 1) {
+                    activeSet.clear();
+                    items.forEach((item, i) => {
+                        if (i === 0) activeSet.add(item.key);
+                    });
+                    menu.querySelectorAll('input[type="checkbox"]:not(#' + selectAllCheckbox.id + ')').forEach((cb, i) => {
+                        cb.checked = i === 0;
+                    });
+                }
+                button.textContent = `${activeSet.size} selected`;
+                applyFilters();
+            });
+            
+            // Stop propagation but allow checkbox to work naturally
+            selectAllCheckbox.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+            
+            selectAllLabel.addEventListener('click', (e) => {
+                e.stopPropagation();
+            });
+            
+            menu.appendChild(selectAllItem);
+            
+            // Add items
+            items.forEach(item => {
+                const itemDiv = document.createElement('div');
+                itemDiv.className = 'filter-dropdown-item';
+                
+                const checkbox = document.createElement('input');
+                checkbox.type = 'checkbox';
+                checkbox.checked = activeSet.has(item.key);
+                checkbox.id = `${type}-${item.key}`;
+                
+                const label = document.createElement('label');
+                label.textContent = item.label;
+                label.htmlFor = `${type}-${item.key}`;
+                
+                checkbox.addEventListener('change', () => {
+                    if (checkbox.checked) {
+                        activeSet.add(item.key);
+                    } else if (activeSet.size > 1) {
+                        activeSet.delete(item.key);
+                    } else {
+                        checkbox.checked = true;
+                        return;
+                    }
+                    button.textContent = `${activeSet.size} selected`;
+                    selectAllCheckbox.checked = activeSet.size === items.length;
+                    applyFilters();
+                });
+                
+                // Stop propagation but allow checkbox to work naturally
+                checkbox.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                });
+                
+                label.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                });
+                
+                // Don't add onclick to itemDiv - let checkboxes work naturally
+                itemDiv.appendChild(checkbox);
+                itemDiv.appendChild(label);
+                menu.appendChild(itemDiv);
+            });
+            
+            dropdown.appendChild(button);
+            dropdown.appendChild(menu);
+            container.appendChild(dropdown);
+        }
+        
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', () => {
+            document.querySelectorAll('.filter-dropdown-menu').forEach(menu => {
+                menu.classList.remove('show');
+            });
+        });
+        
+        function applyFilters() {
+            if (!nodesDataSet || !edgesDataSet) return;
+            
+            const visibleNodeIds = new Set();
+            const nodesToUpdate = allNodes.map(node => {
+                const matchesEntity = activeEntityTypes.size === 0 || activeEntityTypes.has(node.nodeType);
+                const matchesSearch = searchTerm === '' ||
+                    node.label.toLowerCase().includes(searchTerm) ||
+                    (node.data.description || '').toLowerCase().includes(searchTerm);
+                const hidden = !(matchesEntity && matchesSearch);
+                if (!hidden) visibleNodeIds.add(node.id);
+                return { ...node, hidden };
+            });
+            
+            nodesDataSet.update(nodesToUpdate);
+            applyEdgeFilters(visibleNodeIds);
+        }
+        
+        function applyEdgeFilters(visibleNodeIds) {
+            const edgesToUpdate = allEdges.map(edge => {
+                const relType = edge.relType || edge.label || 'related';
+                const matchesType = activeRelationshipTypes.size === 0 || activeRelationshipTypes.has(relType);
+                const nodesVisible = visibleNodeIds.has(edge.from) && visibleNodeIds.has(edge.to);
+                return { id: edge.id, hidden: !(matchesType && nodesVisible) };
+            });
+            edgesDataSet.update(edgesToUpdate);
+        }
+        
+        // Initialize the network
+        function initNetwork() {
+            const container = document.getElementById('graph');
+            const data = {
+                nodes: nodesDataSet,
+                edges: edgesDataSet
+            };
+            
+            const options = {
+                physics: {
+                    enabled: true,
+                    stabilization: {
+                        enabled: true,
+                        iterations: 150,
+                        updateInterval: 10
+                    },
+                    barnesHut: {
+                        gravitationalConstant: -30000,
+                        centralGravity: 0.3,
+                        springLength: 150,
+                        springConstant: 0.04,
+                        damping: 0.09,
+                        avoidOverlap: 0.5
+                    }
+                },
+                layout: {
+                    randomSeed: 42,
+                    improvedLayout: true
+                },
+                interaction: {
+                    hover: true,
+                    tooltipDelay: 100,
+                    navigationButtons: true,
+                    keyboard: true
+                },
+                nodes: {
+                    borderWidth: 2,
+                    shadow: true
+                },
+                edges: {
+                    smooth: {
+                        type: 'continuous'
+                    }
+                }
+            };
+            
+            network = new vis.Network(container, data, options);
+            
+            // Event listeners
+            network.on("click", function(params) {
+                if (params.nodes.length > 0) {
+                    showNodeDetails(params.nodes[0]);
+                }
+            });
+            
+            network.once("stabilizationIterationsDone", function() {
+                network.setOptions({ physics: { enabled: false } });
+                document.getElementById('loading').classList.add('hidden');
+            });
+            
+            setTimeout(() => {
+                document.getElementById('loading').classList.add('hidden');
+            }, 10000);
+        }
+        
+        // Show node details dynamically
+        function showNodeDetails(nodeId) {
+            const node = nodesDataSet.get(nodeId);
+            if (!node) return;
+            
+            const panel = document.getElementById('details-panel');
+            const title = document.getElementById('detail-title');
+            const content = document.getElementById('detail-content');
+            
+            panel.classList.remove('hidden');
+            title.textContent = node.label;
+            
+            let html = '';
+            
+            // Dynamically render fields based on node data
+            for (const [key, value] of Object.entries(node.data)) {
+                if (key === 'id') continue;
+                
+                html += `<div class="field">
+                    <div class="field-label">${formatLabel(key)}</div>
+                    <div class="field-value">${formatValue(value)}</div>
+                </div>`;
+            }
+            
+            html += `<button class="action-button" onclick="focusOnNode('${nodeId}')">Show Connections</button>`;
+            
+            content.innerHTML = html;
+        }
+        
+        function formatValue(value) {
+            if (Array.isArray(value)) {
+                return value.join(', ') || '—';
+            }
+            if (typeof value === 'object' && value !== null) {
+                return JSON.stringify(value, null, 2);
+            }
+            return value || '—';
+        }
+        
+        function closeDetailsPanel() {
+            document.getElementById('details-panel').classList.add('hidden');
+            network.selectNodes([]);
+        }
+        
+        function focusOnNode(nodeId) {
+            const connectedNodes = network.getConnectedNodes(nodeId);
+            const nodesToShow = [nodeId, ...connectedNodes];
+            
+            const nodesToUpdate = allNodes.map(node => ({
+                ...node,
+                hidden: !nodesToShow.includes(node.id)
+            }));
+            nodesDataSet.update(nodesToUpdate);
+            
+            network.focus(nodeId, { scale: 1.2, animation: true });
+        }
+        
+        function resetView() {
+            const nodesToUpdate = allNodes.map(node => ({ ...node, hidden: false }));
+            nodesDataSet.update(nodesToUpdate);
+            network.fit({ animation: true });
+        }
+        
+        async function reloadData() {
+            document.getElementById('loading').classList.remove('hidden');
+            try {
+                await loadAndInitialize();
+                alert('Data reloaded successfully!');
+            } catch (error) {
+                alert('Failed to reload data: ' + error.message);
+            }
+            document.getElementById('loading').classList.add('hidden');
+        }
+        
+        // Search functionality
+        document.getElementById('search').addEventListener('input', function(e) {
+            searchTerm = e.target.value.toLowerCase();
+            applyFilters();
+        });
+        
+        // Main initialization
+        async function loadAndInitialize() {
+            try {
+                // Load config first
+                await initializeConfig();
+                
+                // Load entities
+                entitiesData = await loadEntities();
+                
+                // Convert to nodes and edges
+                allNodes = createNodes(entitiesData);
+                allEdges = createEdges(entitiesData);
+                
+                // Initialize DataSets
+                nodesDataSet = new vis.DataSet(allNodes);
+                edgesDataSet = new vis.DataSet(allEdges);
+                
+                // Build and render filter controls
+                buildFilterDefinitions();
+                renderFilterControls();
+                
+                // Initialize network
+                if (network === null) {
+                    initNetwork();
+                    setTimeout(() => applyFilters(), 100);
+                } else {
+                    network.setData({ nodes: nodesDataSet, edges: edgesDataSet });
+                    applyFilters();
+                }
+                
+                console.log('Knowledge Graph Loaded Successfully');
+                console.log(`Total Nodes: ${allNodes.length}`);
+                console.log(`Total Edges: ${allEdges.length}`);
+                
+            } catch (error) {
+                console.error('Failed to initialize:', error);
+                throw error;
+            }
+        }
+        
+        // Initialize on page load
+        window.addEventListener('load', async function() {
+            try {
+                await loadAndInitialize();
+            } catch (error) {
+                document.getElementById('loading').innerHTML = 
+                    '<div style="text-align: center;">' +
+                    '<p style="color: red; font-size: 18px; margin-bottom: 20px;">Failed to load knowledge graph</p>' +
+                    '<p>' + error.message + '</p>' +
+                    '<p style="margin-top: 20px; font-size: 14px;">Make sure you\'re running the local server.</p>' +
+                    '</div>';
+            }
+        });
+    </script>
+</body>
+</html>
+

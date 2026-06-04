@@ -1,0 +1,203 @@
+---
+description: "PlasticFlower code review standards - applies project-specific architectural and quality criteria"
+alwaysApply: true
+---
+
+# PlasticFlower Code Review Standards
+
+This file defines code review criteria for the plasticFlower project. When reviewing code changes, apply these standards systematically.
+
+## Context Documents to Load
+
+Before reviewing, load these critical documents:
+
+- `@_docs/ARCHITECTURE_ADVISORY.md` - System design, component responsibilities, data model
+- `@_docs/_START_SESSION_STATE.md` - Current phase, recent decisions, blockers
+- `@_docs/_dev/ADR/INDEX.md` - Architecture decision summaries
+- `@_docs/_dev/VALIDATED_PATTERNS.md` - Proven patterns and anti-patterns
+- `@_docs/_dev/SOLUTIONS_LOG.md` - Known issues and fixes
+- `@_docs/_dev/CYPHER_PATTERNS.md` - Neo4j query reference (if reviewing Cypher)
+
+**Full Specification:** `@_dev/CODE_REVIEW_AGENT_SPEC.md`
+
+## Active Plan Check
+
+Before reviewing, check `.cursor/plans/` for active implementation plans. If multiple plans exist, ask which plan this review relates to. Plans contain implementation context, task breakdowns, and acceptance criteria.
+
+---
+
+## Review Criteria (Priority Order)
+
+### 1. BLOCKING Issues (Must Fix)
+
+Flag as **BLOCKING** if code:
+
+#### Architecture Violations
+- Places logic in wrong layer/module (e.g., service logic in API endpoint)
+- Bypasses documented data flow patterns
+- Missing required fields on entities
+- Uses unapproved technologies/dependencies
+- Violates separation of concerns
+
+#### ADR Violations
+Check against documented decisions:
+- **ADR-006**: Must use async event-driven pattern (not LangGraph)
+- **ADR-007**: LIMIT-based transcript retrieval only
+- **ADR-008**: Similarity threshold must be 0.92
+- **ADR-009**: Redis-only agent scheduling (no timer loops)
+- **ADR-010**: Ratio-based triggering (default 5:1)
+
+If code contradicts an ADR without a superseding ADR, flag as **BLOCKING**.
+
+#### Known Issue Reintroduction
+Check `SOLUTIONS_LOG.md` - flag if code reintroduces:
+- Missing `thinking_budget=0` on Gemini 2.5 structured output
+- Using MERGE for node lookups (creates empty nodes - use MATCH)
+- Regex patterns in Pydantic schemas for Gemini
+- Timer loops for event-driven components
+- Incorrect API key caching (singleton pattern)
+- Corrupt node data from wrong map projection syntax
+
+#### Development Goal Misalignment
+- Contradicts current development phase roadmap
+- Adds features from future phases prematurely
+- Introduces technical debt that blocks future phases
+
+---
+
+### 2. WARNING Issues (Should Fix)
+
+Flag as **WARNING** if code:
+
+#### Pattern Deviations
+- Could benefit from documented patterns but uses alternative approach
+- Risky implementation that may cause problems
+- Missing proper error handling or context in error messages
+
+#### Code Quality Issues
+- Missing type hints on Python function signatures
+- Missing docstrings on public functions
+- Inconsistent naming conventions (should use snake_case for Python, camelCase for JS/TS)
+
+#### Test Coverage
+- New functionality lacks tests
+- Not using `_dev/fixtures/` test data where appropriate
+- Edge cases not documented in tests or comments
+
+#### Development Phase Concerns
+- Over-engineered for current requirements
+- Misaligned with current phase objectives
+- Disproportionate scope for the task
+
+---
+
+### 3. SUGGESTION Issues (Consider)
+
+Flag as **SUGGESTION** if code:
+
+#### Style & Convention
+- Uses American English instead of UK English in comments/strings/docs
+- Could be more readable or maintainable
+- Descriptive error messages could include more context
+
+#### Optimisation Opportunities
+- Could reuse existing components
+- Duplicates functionality
+- Implementation not lean (excess code for requirement)
+
+---
+
+## Special Domain Checks
+
+### Neo4j/Cypher Code
+- Index usage for performance
+- Transaction boundaries correct
+- Relationship directions correct
+- All queries include `session_id` isolation
+- Using MATCH (not MERGE) for lookups
+
+### LLM Integration Code
+- Timeout configuration (90s for Gardener)
+- `thinking_budget=0` for structured output (Gemini 2.5)
+- Model rotation for quota management
+- Proper error handling for API failures
+
+### Redis Streams Code
+- Stale event handling
+- Consumer group configuration correct
+- Event payload structure matches schema
+- Acknowledgement patterns correct
+
+### SSE Event Code
+- Event type matches documented types
+- Payload structure matches schema
+- Correct source agent attribution
+
+---
+
+## Review Output Format
+
+Structure findings in three sections:
+
+### BLOCKING (Must Fix)
+- **[B1]** [Issue description]
+  - Location: `file.py:42`
+  - Violation: [Which standard/ADR/pattern]
+  - Fix: [Specific recommendation]
+
+### WARNING (Should Fix)
+- **[W1]** [Issue description]
+  - Location: `file.py:67`
+  - Concern: [Why this matters]
+  - Suggestion: [How to improve]
+
+### SUGGESTION (Consider)
+- **[S1]** [Improvement opportunity]
+  - Current: [What the code does]
+  - Better: [Alternative approach]
+
+### Approved Patterns
+Things done correctly (positive reinforcement):
+- Correct use of MATCH for node lookup (line 34)
+- Proper `thinking_budget=0` configuration (line 89)
+
+---
+
+## Classification Tags
+
+Use these tags for quick scanning:
+
+- `[GOAL]` - Development goal misalignment
+- `[ARCH]` - Architecture violation
+- `[ADR-XXX]` - Specific ADR violation
+- `[ANTI-PATTERN]` - Uses known problematic pattern
+- `[BUG-RISK]` - May reintroduce known issue
+- `[STYLE]` - Code style/convention
+- `[PERF]` - Performance consideration
+- `[TEST]` - Testing gap
+- `[SCOPE]` - Over-engineering or scope creep
+
+---
+
+## Final Summary Format
+
+Always end with:
+
+```
+Summary: [X] BLOCKING, [Y] WARNING, [Z] SUGGESTION
+Recommendation: [APPROVE / APPROVE WITH CHANGES / REQUEST CHANGES]
+```
+
+---
+
+## Important Notes
+
+1. **Anti-patterns vs Reference patterns**: Code is NOT required to match patterns in VALIDATED_PATTERNS. Only flag if code uses documented anti-patterns. Novel approaches are acceptable if sound.
+
+2. **UK English**: Project standard is UK English (colour not color, analyse not analyze, etc.)
+
+3. **Type safety**: Python requires type hints on all function signatures.
+
+4. **Context awareness**: Consider current development phase from SESSION_STATE when evaluating scope and complexity.
+
+5. **Positive reinforcement**: Always note approved patterns and good practices, not just issues.

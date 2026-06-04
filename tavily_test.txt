@@ -1,0 +1,5 @@
+Starting Tavily Simple Test
+Testing Tavily API with key: tvly...00EN
+✅ Tavily API Test: SUCCESS
+Results found: 1
+Title: Gemini (language model) - Wikipedia

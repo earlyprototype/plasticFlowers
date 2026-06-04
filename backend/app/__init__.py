@@ -1,0 +1,1 @@
+"""plasticFlower FastAPI application package."""

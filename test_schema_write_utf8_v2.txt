@@ -1,0 +1,3 @@
+Starting Schema Test v2
+INFO:__main__:Importing services...
+INFO:__main__:Imports success.

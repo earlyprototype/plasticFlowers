@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Data Load</title>
+</head>
+<body>
+    <h1>Testing Data Load</h1>
+    <div id="status">Loading...</div>
+    <pre id="result"></pre>
+    
+    <script>
+        async function test() {
+            const statusEl = document.getElementById('status');
+            const resultEl = document.getElementById('result');
+            
+            try {
+                console.log('Fetching _data/entities.json...');
+                const response = await fetch('_data/entities.json');
+                
+                console.log('Response status:', response.status);
+                console.log('Response ok:', response.ok);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}`);
+                }
+                
+                const data = await response.json();
+                console.log('Data loaded successfully');
+                
+                const stats = {
+                    components: (data.components || []).length,
+                    teams: (data.teams || []).length,
+                    specifications: (data.specifications || []).length,
+                    relationships: (data.relationships || []).length
+                };
+                
+                statusEl.textContent = 'SUCCESS!';
+                statusEl.style.color = 'green';
+                resultEl.textContent = JSON.stringify(stats, null, 2);
+                
+            } catch (error) {
+                statusEl.textContent = 'ERROR: ' + error.message;
+                statusEl.style.color = 'red';
+                resultEl.textContent = error.stack;
+                console.error('Test failed:', error);
+            }
+        }
+        
+        window.addEventListener('load', test);
+    </script>
+</body>
+</html>
+

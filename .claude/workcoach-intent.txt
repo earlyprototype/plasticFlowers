@@ -1,0 +1,2 @@
+<!-- session:734c1152-f149-4f5b-92cc-b438d4900d9b -->
+2026-06-04T21:34:38.797Z	Hey, I have a few tasks to work through including pushing to a new github repo (might need init first. cant remember) and then I need to examine the neo4j implementation to examine for its transferability to a similar project (this will probably require a deep analysis and comparison against other standard best practice and usecases)

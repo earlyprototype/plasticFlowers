@@ -1,0 +1,10 @@
+Starting Tavily HTTPX Test v2
+root: 1. Importing tavily_mcp...
+root: 2. Import success.
+root: 3. Running search...
+app.services.tavily_mcp: tavily_mcp.search query=DeepMind Gemini max_results=1
+httpx: HTTP Request: POST https://mcp.tavily.com/mcp/?tavilyApiKey=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 "HTTP/1.1 200 OK"
+root: 4. Search complete. Query: DeepMind Gemini
+root:    Results: 1
+root:    First Result: Models
+root:    URL: https://deepmind.google/models/

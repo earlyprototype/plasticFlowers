@@ -1,0 +1,90 @@
+Init...
+[16:44:43] === STARTING PIPELINE DEBUG ===
+[16:44:43] Imports: OK
+[16:44:43] Session ID: debug_sess_2ae51905
+[16:44:43] STEP 1: Testing Neo4j Read (list_nodes)...
+[16:45:25] STEP 1: OK (Got 0 nodes)
+[16:45:25] STEP 2: Initializing BuilderService...
+[16:45:25] STEP 2: OK
+[16:45:25] STEP 3: Testing LLM Invocation (internal _invoke_with_retry)...
+[16:45:29] STEP 3: OK (Extracted 3 nodes)
+[16:45:29] STEP 4: Testing Full process_chunk...
+[16:47:00] STEP 4: FAILED (Builder timed out after 90.0s)
+Traceback (most recent call last):
+  File "c:\Users\Fab2\Desktop\AI\_plasticFlower\backend\app\services\builder_service.py", line 99, in process_chunk
+    return await self._process(session_id, chunk, start)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\Fab2\Desktop\AI\_plasticFlower\backend\app\services\builder_service.py", line 155, in _process
+    check_results = await self._check_similarity_and_persist(
+                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\Fab2\Desktop\AI\_plasticFlower\backend\app\services\builder_service.py", line 284, in _check_similarity_and_persist
+    candidate = await _query_best_match(
+                ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\Fab2\Desktop\AI\_plasticFlower\backend\app\services\similarity.py", line 94, in _query_best_match
+    return await session.execute_read(_work, query, params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\work\session.py", line 663, in execute_read
+    return await self._run_transaction(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\work\session.py", line 545, in _run_transaction
+    await self._open_transaction(
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\work\session.py", line 424, in _open_transaction
+    await self._connect(access_mode=access_mode)
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\work\session.py", line 130, in _connect
+    await super()._connect(
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\work\workspace.py", line 165, in _connect
+    await self._pool.update_routing_table(
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\io\_pool.py", line 777, in update_routing_table
+    if await self._update_routing_table_from(
+       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\io\_pool.py", line 723, in _update_routing_table_from
+    new_routing_table = await self.fetch_routing_table(
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\io\_pool.py", line 660, in fetch_routing_table
+    new_routing_info = await self.fetch_routing_info(
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\io\_pool.py", line 628, in fetch_routing_info
+    cx = await self._acquire(address, auth, deadline, None)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\io\_pool.py", line 316, in _acquire
+    return await connection_creator()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\io\_pool.py", line 166, in connection_creator
+    connection = await self.opener(
+                 ^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\io\_pool.py", line 560, in opener
+    return await AsyncBolt.open(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async\io\_bolt.py", line 405, in open
+    await AsyncBoltSocket.connect(
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async_compat\network\_bolt_socket.py", line 388, in connect
+    s = await cls._connect_secure(
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\site-packages\neo4j\_async_compat\network\_bolt_socket.py", line 196, in _connect_secure
+    await wait_for(
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\asyncio\tasks.py", line 520, in wait_for
+    return await fut
+           ^^^^^^^^^
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\asyncio\selector_events.py", line 651, in sock_connect
+    return await fut
+           ^^^^^^^^^
+asyncio.exceptions.CancelledError
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "c:\Users\Fab2\Desktop\AI\_plasticFlower\backend\app\services\builder_service.py", line 98, in process_chunk
+    async with asyncio.timeout(self._timeout):
+  File "C:\Users\Fab2\AppData\Local\Programs\Python\Python312\Lib\asyncio\timeouts.py", line 115, in __aexit__
+    raise TimeoutError from exc_val
+TimeoutError
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\Fab2\Desktop\AI\_plasticFlower\scripts\debug_pipeline_blind.py", line 82, in test_pipeline
+    result = await service.process_chunk(session_id, chunk)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "c:\Users\Fab2\Desktop\AI\_plasticFlower\backend\app\services\builder_service.py", line 102, in process_chunk
+    raise BuilderServiceError(
+app.services.builder_service.BuilderServiceError: Builder timed out after 90.0s

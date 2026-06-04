@@ -1,0 +1,65 @@
+=== STARTING DRIVER LIFECYCLE DEBUG ===
+Iteration 1
+  Iter 1: Read Session Acquired
+  Iter 1: Read Done
+  Iter 1: Write Session Acquired
+  Iter 1: Write Done
+Iteration 2
+  Iter 2: Read Session Acquired
+  Iter 2: Read Done
+  Iter 2: Write Session Acquired
+  Iter 2: Write Done
+Iteration 3
+  Iter 3: Read Session Acquired
+  Iter 3: Read Done
+  Iter 3: Write Session Acquired
+  Iter 3: Write Done
+Iteration 4
+  Iter 4: Read Session Acquired
+  Iter 4: Read Done
+  Iter 4: Write Session Acquired
+  Iter 4: Write Done
+Iteration 5
+  Iter 5: Read Session Acquired
+  Iter 5: Read Done
+  Iter 5: Write Session Acquired
+  Iter 5: Write Done
+Iteration 6
+  Iter 6: Read Session Acquired
+  Iter 6: Read Done
+  Iter 6: Write Session Acquired
+  Iter 6: Write Done
+Iteration 7
+  Iter 7: Read Session Acquired
+  Iter 7: Read Done
+  Iter 7: Write Session Acquired
+  Iter 7: Write Done
+Iteration 8
+  Iter 8: Read Session Acquired
+  Iter 8: Read Done
+  Iter 8: Write Session Acquired
+  Iter 8: Write Done
+Iteration 9
+  Iter 9: Read Session Acquired
+  Iter 9: Read Done
+  Iter 9: Write Session Acquired
+  Iter 9: Write Done
+Iteration 10
+  Iter 10: Read Session Acquired
+  Iter 10: Read Done
+  Iter 10: Write Session Acquired
+  Iter 10: Write Done
+Iteration 11
+  Iter 11: Read Session Acquired
+  Iter 11: Read Done
+  Iter 11: Write Session Acquired
+  Iter 11: Write Done
+Iteration 12
+  Iter 12: Read Session Acquired
+  Iter 12: Read Done
+  Iter 12: Write Session Acquired
+  Iter 12: Write Done
+Iteration 13
+  Iter 13: Read Session Acquired
+  Iter 13: Read Done
+  Iter 13: Write Session Acquired

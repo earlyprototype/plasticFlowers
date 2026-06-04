@@ -1,0 +1,7 @@
+Phase 3 Verification
+Checking NodeNeedsResearchEvent definition...
+✅ NodeNeedsResearchEvent instantiated OK: session_id='test_session' node_id='node_123' label='Test Node' entity_type='organisation' research_reason='First mention' priority='high' timestamp=datetime.datetime(2026, 1, 7, 12, 29, 28, 602287, tzinfo=datetime.timezone.utc)
+Checking scheduler imports...
+✅ GardenerScheduler has _publish_research_actions method
+
+All Phase 3 verifications passed!

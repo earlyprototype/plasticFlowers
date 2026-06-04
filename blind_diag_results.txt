@@ -1,0 +1,4 @@
+ENV_READ: OK
+KEY_PREFIX: AIza...
+NEO4J_CHECK: Skipped (focusing on LLM first)
+GEMINI_HTTP: SUCCESS

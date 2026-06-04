@@ -1,0 +1,316 @@
+# Ecosystem Mapping Configuration
+# For mapping stakeholders, organizations, resources, and value flows
+
+domain: ecosystem
+version: "1.0"
+
+# Entity type definitions
+entity_types:
+  primary:
+    name: elements
+    label_singular: Element
+    label_plural: Elements
+    icon: "◉"
+    types:
+      - organization
+      - platform
+      - resource
+      - process
+      - capability
+      - value-stream
+      - market
+      - technology
+      - policy
+      - infrastructure
+    stakeholder_types:
+      - anchor-manufacturer
+      - indigenous-sme
+      - support-infrastructure
+      - government-agency
+      - capability-provider
+      - policy-framework
+    fields:
+      - name: id
+        type: string
+        required: true
+      - name: label
+        type: string
+        required: true
+      - name: type
+        type: enum
+        required: true
+      - name: stakeholder_type
+        type: enum
+        required: false
+        comment: "Primary classification for visualization coloring"
+      - name: cluster
+        type: string
+        required: false
+        comment: "Industry/geographic cluster for shape differentiation"
+      - name: description
+        type: string
+        required: true
+      - name: sector
+        type: string
+        required: false
+        comment: "Industry sector or domain"
+      - name: maturity
+        type: enum
+        required: false
+        values:
+          - emerging
+          - developing
+          - mature
+          - declining
+      - name: scale
+        type: enum
+        required: false
+        values:
+          - local
+          - regional
+          - national
+          - global
+      - name: source_insights
+        type: array
+        required: false
+        comment: "Reports, interviews that mention this"
+      - name: related_to
+        type: array
+        required: false
+      - name: components
+        type: array
+        required: false
+      - name: location
+        type: object
+        required: false
+        comment: "Geographic location details"
+      - name: metrics
+        type: object
+        required: false
+        comment: "Quantitative business metrics"
+      - name: digital_profile
+        type: object
+        required: false
+        comment: "Digital transformation status and capabilities"
+      - name: strategic_position
+        type: object
+        required: false
+        comment: "Threats, opportunities, competitive position"
+      - name: capabilities_offered
+        type: array
+        required: false
+        comment: "Services, products, expertise this entity provides"
+      - name: needs_unmet
+        type: array
+        required: false
+        comment: "Current gaps, requirements, demands not being fulfilled"
+      - name: target_customers
+        type: array
+        required: false
+        comment: "Who needs what this entity offers"
+  
+  contributors:
+    name: stakeholders
+    label_singular: Stakeholder
+    label_plural: Stakeholders
+    icon: "👤"
+    fields:
+      - name: id
+        type: string
+        required: true
+      - name: name
+        type: string
+        required: true
+      - name: type
+        type: enum
+        required: false
+        values:
+          - individual
+          - organization
+          - institution
+          - community
+          - government
+      - name: role
+        type: string
+        required: false
+      - name: influence_level
+        type: enum
+        required: false
+        values:
+          - high
+          - medium
+          - low
+      - name: interests
+        type: array
+        required: false
+        comment: "Key interests and motivations"
+      - name: key_elements
+        type: array
+        required: false
+        comment: "Elements they're involved with"
+      - name: mentioned_in
+        type: array
+        required: false
+  
+  sources:
+    name: insights
+    label_singular: Insight
+    label_plural: Insights
+    icon: "💡"
+    fields:
+      - name: id
+        type: string
+        required: true
+      - name: title
+        type: string
+        required: true
+      - name: source_type
+        type: enum
+        required: false
+        values:
+          - interview
+          - report
+          - survey
+          - observation
+          - workshop
+          - secondary-research
+      - name: date
+        type: string
+        required: false
+      - name: authors
+        type: array
+        required: false
+      - name: key_elements
+        type: array
+        required: false
+      - name: key_findings
+        type: array
+        required: false
+      - name: references
+        type: array
+        required: false
+      - name: status
+        type: enum
+        required: false
+        values:
+          - validated
+          - preliminary
+          - needs-verification
+
+# Relationship type definitions
+relationships:
+  types:
+    # Category 1: Relationships (realized)
+    - provides-to
+    - receives-from
+    - influences
+    - depends-on
+    - competes-with
+    - partners-with
+    - funds
+    - regulates
+    - enables
+    - constrains
+    - collaborates-with
+    - supplies-to
+    - consumes-from
+    # Category 2: Capability-Need Matching
+    - needs-from
+    - offers-capability
+    # Category 3: Gap Identification & Potential
+    - could-provide-to
+    - could-partner-with
+    - gap
+    - opportunity
+  
+  categories:
+    - name: "Relationships"
+      types: [provides-to, receives-from, influences, depends-on, competes-with, partners-with, funds, regulates, enables, constrains, collaborates-with, supplies-to, consumes-from]
+    - name: "Capability-Need Matching"
+      types: [needs-from, offers-capability]
+    - name: "Gaps & Potential"
+      types: [could-provide-to, could-partner-with, gap, opportunity]
+  provenance_fields:
+    - source_insights
+    - mentioned_in
+    - key_elements
+
+# File paths
+paths:
+  data_dir: "./_data"
+  entities_file: "entities.json"
+  document_dir: "./insights"
+  output_dir: "./output"
+
+# Visualization settings
+visualization:
+  colors:
+    # Entity type colors (fallback)
+    organization: "#3498db"
+    platform: "#9b59b6"
+    resource: "#2ecc71"
+    process: "#f39c12"
+    capability: "#1abc9c"
+    value-stream: "#e74c3c"
+    market: "#34495e"
+    technology: "#e67e22"
+    policy: "#c0392b"
+    infrastructure: "#16a085"
+    default: "#7f8c8d"
+    
+    # Stakeholder type colors (primary)
+    anchor-manufacturer: "#2980b9"
+    indigenous-sme: "#27ae60"
+    support-infrastructure: "#8e44ad"
+    government-agency: "#c0392b"
+    capability-provider: "#16a085"
+    policy-framework: "#d35400"
+  
+  node_sizes:
+    element: 20
+    stakeholder: 15
+    insight: 18
+  
+  shapes:
+    biopharma-medtech: "diamond"
+    precision-engineering: "square"
+    food-processing: "triangle"
+    mass-customisation: "star"
+    specialized-engineering: "hexagon"
+    technology-hardware: "triangleDown"
+    support-infrastructure: "dot"
+    government-policy: "box"
+    default: "dot"
+  
+  physics:
+    enabled: false
+    gravitationalConstant: -4000
+    centralGravity: 0.3
+    springLength: 150
+    springConstant: 0.04
+    damping: 0.09
+
+# AI context configuration (optional)
+gemini_context:
+  enabled: false
+  system_prompt: |
+    You are an ecosystem analysis assistant with access to a stakeholder and resource graph.
+    The graph contains ecosystem elements, stakeholders, and insights with their relationships.
+    You help with:
+    - Understanding ecosystem dynamics
+    - Identifying key stakeholders and power structures
+    - Mapping value flows and dependencies
+    - Finding collaboration opportunities
+    - Analyzing ecosystem health and gaps
+  
+  document_context_template: |
+    Current element: {element_name}
+    Type: {element_type}
+    Sector: {sector}
+    Maturity: {maturity}
+    Scale: {scale}
+    Key stakeholders: {stakeholders}
+    Value flows: {value_flows}
+    
+    This element is part of an ecosystem with {total_elements} elements and {total_stakeholders} stakeholders.
+
