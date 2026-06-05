@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from .flower import Flower, FlowerBridge
 from .node import Node
 from .relationship import Relationship
-from .research import ReferenceNode
+from .reference import ReferenceNode
 
 
 class GraphState(BaseModel):
