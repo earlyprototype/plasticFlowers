@@ -25,7 +25,7 @@ class Node(BaseModel):
         ..., ge=0.0, le=1.0, description="LLM certainty that this node is meaningful"
     )
     mentions: int = Field(
-        ..., ge=0, description="How many times the concept has been referenced (similarity ≥0.85)"
+        ..., ge=0, description="How many times the concept has been referenced (similarity ≥0.92)"
     )
     timestamps: List[float] = Field(
         default_factory=list,
