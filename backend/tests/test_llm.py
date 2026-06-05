@@ -6,6 +6,7 @@ import pytest
 from pydantic import SecretStr
 
 from backend.app.services import llm
+from backend.app.services import llm_utils
 
 
 class DummySettings:
@@ -22,19 +23,22 @@ class DummySettings:
         self.vertex_location = "us-central1"
 
 
+# FIX 2: use monkeypatch so pytest owns the restore, rather than mutating
+# the module global directly in a plain fixture.
 @pytest.fixture(autouse=True)
-def reset_client():
+def reset_client(monkeypatch):
     """Reset the module-level _CLIENT singleton before and after each test."""
-    llm._CLIENT = None
-    yield
-    llm._CLIENT = None
+    monkeypatch.setattr(llm, "_CLIENT", None)
 
 
 def _stub_settings(monkeypatch, **overrides) -> DummySettings:
     settings = DummySettings()
     for key, value in overrides.items():
         setattr(settings, key, value)
+    # Patch both the reference in llm and in llm_utils so create_gemini_config
+    # (which calls llm_utils.get_settings) also sees the test settings.
     monkeypatch.setattr(llm, "get_settings", lambda: settings)
+    monkeypatch.setattr(llm_utils, "get_settings", lambda: settings)
     return settings
 
 
@@ -59,8 +63,8 @@ def _stub_client(monkeypatch, response_sequence):
 
     monkeypatch.setattr(llm, "_get_client", lambda settings: fake_client)
 
-    # Also stub create_gemini_config so tests don't depend on real genai types
-    monkeypatch.setattr(llm, "create_gemini_config", lambda **_: SimpleNamespace())
+    # FIX 1: do NOT stub create_gemini_config — let the real implementation run
+    # so that config-wiring is covered by the tests.
 
     return fake_client, calls
 
@@ -73,12 +77,20 @@ async def test_generate_structured_json_returns_payload(monkeypatch):
         [SimpleNamespace(text='{"nodes": [], "relationships": []}')],
     )
 
-    payload = await llm.generate_structured_json("prompt", schema={"type": "object"})
+    schema = {"type": "object"}
+    payload = await llm.generate_structured_json("prompt", schema=schema)
 
     assert payload == {"nodes": [], "relationships": []}
     assert len(calls) == 1
     assert calls[0]["contents"] == "prompt"
     assert calls[0]["model"] == "gemini-test"
+
+    # FIX 1: assert the real config object wired by create_gemini_config.
+    # create_gemini_config always sets response_mime_type="application/json"
+    # and response_schema to the passed schema dict.
+    config = calls[0]["config"]
+    assert config.response_mime_type == "application/json"
+    assert config.response_schema == schema
 
 
 @pytest.mark.asyncio
@@ -103,7 +115,9 @@ async def test_generate_structured_json_retries_and_succeeds(monkeypatch):
 
     assert payload == {"ok": True}
     assert len(calls) == 2
-    assert sleep_calls and sleep_calls[0] >= 0.0
+    # FIX 3: _compute_backoff(0) = min(4.0, 0.5 * 2**0) + jitter = 0.5 + jitter,
+    # so the floor is 0.5.  Assert real backoff rather than the trivially-true >= 0.0.
+    assert sleep_calls and sleep_calls[0] >= 0.5
 
 
 @pytest.mark.asyncio
