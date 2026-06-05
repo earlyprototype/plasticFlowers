@@ -203,15 +203,8 @@ class ResearcherAgent:
                 model=model,
                 contents=prompt,
                 config=genai_types.GenerateContentConfig(
-                    tools=[genai_types.Tool(
-                        google_search_retrieval=genai_types.GoogleSearchRetrieval(
-                            dynamic_retrieval_config=genai_types.DynamicRetrievalConfig(
-                                mode=genai_types.DynamicRetrievalConfigMode.DYNAMIC_RETRIEVAL_CONFIG_MODE_UNSPECIFIED,
-                                dynamic_threshold=0.7,
-                            )
-                        )
-                    )],
-                    temperature=0.2, 
+                    tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())],
+                    temperature=0.2,
                 )
             )
             
