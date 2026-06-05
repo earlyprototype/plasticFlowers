@@ -79,13 +79,13 @@ async def get_node(session_id: str, node_id: str) -> Optional[Node]:
 
 
 async def update_node(session_id: str, node: Node) -> Node:
-    """Replace a node's stored properties with the provided representation."""
+    """Merge the provided properties into the stored node. Uses SET n += so properties not present in the payload (e.g. a None embedding) are preserved rather than wiped."""
 
     driver = await get_driver()
     node_props = _node_to_properties(node, session_id)
     query = """
     MATCH (n:Node {id: $node_id, session_id: $session_id})
-    SET n += $node  // += preserves unspecified props (e.g. embedding) instead of wiping them
+    SET n += $node
     RETURN n AS node
     """
 

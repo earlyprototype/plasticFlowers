@@ -236,13 +236,13 @@ This is **not** classic retrieval-GraphRAG (Microsoft GraphRAG / `neo4j-graphrag
 
 | Sev | Finding | Location | Note |
 |---|---|---|---|
-| **HIGH** | Latent `NameError`: `_logger` used but never defined in `delete_node`'s scope (no module-level `_logger`; other funcs define it locally) | `graph_db.py:122` | Only fires on the "node already deleted" warning path, so it lurks. Add a module logger. |
-| **MED** | `update_node`/`create_node` do `SET n = $node` (full overwrite) while `_node_to_properties` drops `embedding` when `None` → updating a node without a populated embedding **erases the stored vector** | `graph_db.py:78-98,496-502` | Use `SET n += $node`, or always carry the embedding. Matters because the vector index depends on it. |
+| **HIGH** | Latent `NameError`: `_logger` used but never defined in `delete_node`'s scope (no module-level `_logger`; other funcs define it locally) | `graph_db.py:122` | Only fires on the "node already deleted" warning path, so it lurks. Add a module logger. — RESOLVED (fixed in this branch) |
+| **MED** | `update_node`/`create_node` do `SET n = $node` (full overwrite) while `_node_to_properties` drops `embedding` when `None` → updating a node without a populated embedding **erases the stored vector** | `graph_db.py:78-98,496-502` | Use `SET n += $node`, or always carry the embedding. Matters because the vector index depends on it. — RESOLVED (fixed in this branch) |
 | **MED** | Global-index ANN + session post-filter can drop valid same-session matches when other sessions crowd the top-K | `similarity.py:71-78` | Recall risk grows with tenant count; see §10/§11. |
 | **LOW** | In-memory `_builder_runs` counter is non-durable and not multi-instance safe | `builder_service.py:80,494` | Move to Redis for scale-out. |
 | **LOW** | N+1 write round-trips per chunk | `builder_service.py:415-438` | `UNWIND` batch. |
-| **DOC** | Architecture report states similarity threshold **0.85**; real value is **0.92** | `NEO4J_ARCHITECTURE_REPORT.md:40` vs `config.py:110` | Also echoed stale in `models/node.py:28` ("≥0.85"). |
-| **DOC** | Architecture report lists a `hierarchical` relationship category that **does not exist**; the enum is `COMPARATIVE` | report vs `models/enums.py:25` | Update the report. |
+| **DOC** | Architecture report states similarity threshold **0.85**; real value is **0.92** | `NEO4J_ARCHITECTURE_REPORT.md:40` vs `config.py:110` | Also echoed stale in `models/node.py:28` ("≥0.85"). — RESOLVED (fixed in this branch) |
+| **DOC** | Architecture report lists a `hierarchical` relationship category that **does not exist**; the enum is `COMPARATIVE` | report vs `models/enums.py:25` | Update the report. — RESOLVED (fixed in this branch) |
 | **DOC** | `NEO4J_ARCHITECTURE_REPORT.md` (dated 20 Dec) predates ADR-0008/0011/0013 and is partly superseded | report header | Refresh or mark historical. |
 
 ---
