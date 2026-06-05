@@ -248,22 +248,13 @@ class ResearcherAgent:
                 fetched_at=datetime.now(timezone.utc),
             )
             
+        except ResearcherAgentError:
+            raise  # don't mask our own empty-response signal
         except Exception as exc:
-            logger.error("Gemini fallback failed: %s", exc)
-            # Last resort: Return a basic stub
-            return ReferenceNode(
-                id=f"ref_{uuid.uuid4().hex[:12]}",
-                node_id=node_id,
-                session_id=session_id,
-                entity_type=EntityType(entity_type) if entity_type in [e.value for e in EntityType] else EntityType.CONCEPT,
-                canonical_summary=f"Research failed for '{label}'. Provider errors: Tavily (primary), Gemini (fallback).",
-                sources=[],
-                confidence=0.0,
-                ambiguity_notes=f"All providers failed. Last error: {exc}",
-                needs_user_confirmation=True,
-                search_provider=SearchProvider.GEMINI,
-                fetched_at=datetime.now(timezone.utc),
-            )
+            logger.error("researcher.gemini_failed label=%s error=%s", label, exc)
+            raise ResearcherAgentError(
+                f"Gemini grounding failed for '{label}': {exc}", code="gemini_failed",
+            ) from exc
     
     def _create_reference_from_tavily(
         self,
