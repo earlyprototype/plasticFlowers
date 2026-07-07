@@ -2,12 +2,6 @@
 
 Local-first live mindmap that captures live speech, extracts an emergent knowledge graph via Gemini 2.5 Flash, and renders it in real time.
 
-<p align="center">
-  <img src="assets/plasticflowers.gif" alt="A live knowledge graph growing node by node as speech chunks are ingested, connecting concepts into an emergent mind map." width="100%">
-</p>
-
-<p align="center"><em>Speech in, a living knowledge graph out — concepts and their relationships emerge and connect in real time as you talk.</em></p>
-
 ## Vision
 
 The goal of **plasticFlower** is to create a visual representation of spoken thought that:
