@@ -1,0 +1,127 @@
+flowchart TB
+    subgraph Input["Input Layer"]
+        AUDIO[("Audio Input")]
+        STT["Speech-to-Text"]
+        CHUNKS[("Transcript Chunks")]
+    end
+
+    subgraph Agents["Agent Layer"]
+        direction TB
+        BUILDER["Builder Agent
+        (gemini-2.5-flash)
+        ───────────────
+        - Entity Extraction
+        - Relationship Extraction
+        - Embedding Generation
+        - GHOST Node Creation"]
+        
+        GARDENER["Gardener Agent
+        (gemini-2.5-pro)
+        ───────────────
+        - STT Proofreading
+        - Confirm/Remove Nodes
+        - Merge Duplicates
+        - Form Flowers (Clusters)
+        - Temporal Decay"]
+        
+        RESEARCHER["Researcher Agent
+        (gemini-2.0-flash + Search)
+        ───────────────
+        - External Enrichment
+        - Web Search (Gemini/Tavily)
+        - ReferenceNode Creation"]
+        
+        LIBRARIAN["Librarian Agent
+        (gemini-2.5-pro)
+        ───────────────
+        - Session Q&A
+        - Full Context Loading
+        - Citation Generation"]
+    end
+
+    subgraph Messaging["Messaging Layer"]
+        REDIS[("Redis Streams")]
+        SSE["SSE Event Stream"]
+    end
+
+    subgraph Storage["Storage Layer"]
+        NEO4J[("Neo4j 5.x
+        ───────────
+        Graph Storage
+        Vector Index")]
+        
+        subgraph Entities["Graph Entities"]
+            TRANSCRIPT_CHUNKS["TranscriptChunks
+            (Full Session Transcript)"]
+            NODES["Nodes
+            (GHOST/SOLID/LEGACY)"]
+            RELS["Relationships"]
+            FLOWERS["Flowers (Clusters)"]
+            REFS["ReferenceNodes"]
+            VOCAB["SessionVocabulary"]
+        end
+    end
+
+    subgraph Frontend["Presentation Layer"]
+        API["FastAPI
+        WebSockets + REST"]
+        UI["Cytoscape.js UI
+        ───────────────
+        - Live Graph Visualisation
+        - Semantic Zoom
+        - Q&A Panel"]
+    end
+
+    subgraph UserActions["User Actions"]
+        USER_QUERY["User Query"]
+        USER_CLICK["Node Click
+        (Research Request)"]
+    end
+
+    %% Data Flow
+    AUDIO --> STT --> CHUNKS
+    CHUNKS -->|store immediately| NEO4J
+    CHUNKS --> BUILDER
+    
+    %% Builder outputs
+    BUILDER -->|create nodes/rels| NEO4J
+    BUILDER -->|nodes.created event| REDIS
+    
+    %% Gardener cycle
+    REDIS -->|chunks.added, nodes.created| GARDENER
+    NEO4J -.->|read transcript for context| GARDENER
+    GARDENER -->|proofread, merge, cluster| NEO4J
+    GARDENER --> SSE
+    GARDENER -->|nodes.needs_research| REDIS
+    
+    %% Researcher
+    REDIS -->|research requests| RESEARCHER
+    RESEARCHER -->|create ReferenceNodes| NEO4J
+    RESEARCHER --> SSE
+    
+    %% Librarian (on-demand)
+    USER_QUERY --> API --> LIBRARIAN
+    NEO4J -.->|full session context| LIBRARIAN
+    LIBRARIAN --> API
+    
+    %% User research trigger
+    USER_CLICK --> API --> RESEARCHER
+    
+    %% SSE to UI
+    SSE --> API --> UI
+    NEO4J --> Entities
+    
+    %% Styling
+    classDef input fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
+    classDef agent fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef messaging fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef storage fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    classDef frontend fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    classDef user fill:#fff8e1,stroke:#ffa000,stroke-width:2px
+    
+    class AUDIO,STT,CHUNKS input
+    class BUILDER,GARDENER,RESEARCHER,LIBRARIAN agent
+    class REDIS,SSE messaging
+    class NEO4J,TRANSCRIPT_CHUNKS,NODES,RELS,FLOWERS,REFS,VOCAB storage
+    class API,UI frontend
+    class USER_QUERY,USER_CLICK user

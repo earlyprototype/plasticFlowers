@@ -1,0 +1,208 @@
+/* plasticFlower — Global Styles
+ * Visual Design: RSA Animate inspired (white canvas, bold strokes)
+ * See: _docs/_dev/_MVP/_frontend/02_visual_design.md
+ */
+
+@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700&display=swap');
+
+* {
+  box-sizing: border-box;
+}
+
+:root {
+  --accent: #F97316;
+  --accent-light: #FFF7ED;
+  --stroke: #1A1A1A;
+  --stroke-light: #6B7280;
+  --ghost: #9CA3AF;
+  --canvas: #FFFFFF;
+  --border: #E5E7EB;
+  --flower-bg: #F9FAFB;
+  --danger: #dc2626;
+  --warn: #ea580c;
+}
+
+body {
+  margin: 0;
+  font-family: 'Nunito', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+  background-color: var(--canvas);
+  color: var(--stroke);
+}
+
+/* Canvas container for graph visualisation */
+.graph-canvas {
+  position: relative;
+  background-color: var(--canvas);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  width: 100%;
+  height: calc(100vh - 80px);
+  min-height: 600px;
+  overflow: hidden;
+}
+
+.graph-canvas__viewport {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+}
+
+.graph-canvas__status {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background-color: #fff;
+  color: var(--stroke);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+  z-index: 3;
+}
+
+.graph-canvas__status--ok {
+  border-color: transparent;
+  background-color: var(--accent-light);
+  color: var(--accent);
+}
+
+.graph-canvas__status--warn {
+  border-color: transparent;
+  background-color: #ffedd5;
+  color: var(--warn);
+}
+
+.graph-canvas__status--error {
+  border-color: transparent;
+  background-color: #fee2e2;
+  color: var(--danger);
+}
+
+.graph-canvas__status--muted {
+  opacity: 0.75;
+}
+
+.graph-canvas__toast {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  padding: 8px 14px;
+  border-radius: 8px;
+  background-color: #fff7ed;
+  color: var(--warn);
+  font-size: 13px;
+  box-shadow: 0 4px 10px rgba(0, 0, 0, 0.08);
+  z-index: 3;
+  border: 1px solid rgba(249, 115, 22, 0.2);
+}
+
+.graph-canvas__controls {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  display: flex;
+  gap: 8px;
+  z-index: 3;
+}
+
+.graph-canvas__controls button {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.graph-canvas__legend {
+  position: absolute;
+  bottom: 12px;
+  right: 12px;
+  background: rgba(255, 255, 255, 0.95);
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 11px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  border: 1px solid var(--border);
+  z-index: 3;
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+
+.graph-canvas__legend-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--stroke-light);
+}
+
+.graph-canvas__legend-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 2px solid currentColor;
+}
+
+.graph-canvas__legend-dot--ghost {
+  opacity: 0.5;
+  background-color: #F9FAFB;
+  border-color: #D1D5DB;
+  border-style: dashed;
+}
+
+.graph-canvas__legend-dot--solid {
+  opacity: 1;
+  background-color: white;
+  border-color: #1A1A1A;
+}
+
+.graph-canvas__controls {
+  position: absolute;
+  top: 52px;
+  right: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  z-index: 3;
+}
+
+.graph-canvas__controls button {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--stroke);
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 36px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.graph-canvas__controls button:hover {
+  background: var(--accent-light);
+  border-color: var(--accent);
+  color: var(--accent);
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.12);
+}
+
+.graph-canvas__controls button:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
+}
+
+.graph-canvas__controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none;
+}

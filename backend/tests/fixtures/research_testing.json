@@ -1,0 +1,17 @@
+[
+    {
+        "node_label": "DeepMind",
+        "entity_type": "organisation",
+        "expected_context": "DeepMind"
+    },
+    {
+        "node_label": "Demis Hassabis",
+        "entity_type": "person",
+        "expected_context": "Demis Hassabis"
+    },
+    {
+        "node_label": "AlphaFold",
+        "entity_type": "tool",
+        "expected_context": "AlphaFold protein structure"
+    }
+]

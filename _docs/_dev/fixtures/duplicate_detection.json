@@ -1,0 +1,31 @@
+[
+  {
+    "text": "Machine learning is the foundation of modern AI systems.",
+    "start_time": 0.0,
+    "end_time": 8.0
+  },
+  {
+    "text": "Deep neural networks have many layers of processing.",
+    "start_time": 8.0,
+    "end_time": 16.0
+  },
+  {
+    "text": "ML techniques are used throughout the industry.",
+    "start_time": 16.0,
+    "end_time": 24.0,
+    "note": "ML should merge with machine learning"
+  },
+  {
+    "text": "Artificial intelligence and AI are sometimes used interchangeably.",
+    "start_time": 24.0,
+    "end_time": 32.0,
+    "note": "AI should merge with artificial intelligence"
+  },
+  {
+    "text": "Deep learning builds on neural network principles.",
+    "start_time": 32.0,
+    "end_time": 40.0,
+    "note": "Should not create duplicate 'deep learning'"
+  }
+]
+

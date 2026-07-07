@@ -1,0 +1,50 @@
+[
+  {
+    "text": "Today I'm talking about enter price ireland and their funding programmes.",
+    "start_time": 0.0,
+    "end_time": 5.0,
+    "expected_corrections": [
+      {"original": "enter price ireland", "corrected": "Enterprise Ireland"}
+    ]
+  },
+  {
+    "text": "The new front tears programme is a national pre-accelerator for startups.",
+    "start_time": 5.0,
+    "end_time": 10.0,
+    "expected_corrections": [
+      {"original": "new front tears", "corrected": "New Frontiers"}
+    ]
+  },
+  {
+    "text": "We're also working with the see dar centre for AI research in Dublin.",
+    "start_time": 10.0,
+    "end_time": 15.0,
+    "expected_corrections": [
+      {"original": "see dar", "corrected": "CeADAR"}
+    ]
+  },
+  {
+    "text": "The you carry funding scheme supports research and development projects.",
+    "start_time": 15.0,
+    "end_time": 20.0,
+    "expected_corrections": [
+      {"original": "you carry", "corrected": "UKRI"}
+    ]
+  },
+  {
+    "text": "Machine learning and graph queue L are key technologies for knowledge graphs.",
+    "start_time": 20.0,
+    "end_time": 25.0,
+    "expected_corrections": [
+      {"original": "graph queue L", "corrected": "GraphQL"}
+    ]
+  },
+  {
+    "text": "The invest any organisation provides support for Northern Irish companies.",
+    "start_time": 25.0,
+    "end_time": 30.0,
+    "expected_corrections": [
+      {"original": "invest any", "corrected": "Invest NI"}
+    ]
+  }
+]

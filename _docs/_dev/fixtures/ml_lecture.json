@@ -1,0 +1,43 @@
+[
+  {
+    "text": "Machine learning is transforming how we build software. Neural networks, inspired by the human brain, can learn patterns from data. Deep learning is a subset that uses multiple layers.",
+    "start_time": 0.0,
+    "end_time": 30.0
+  },
+  {
+    "text": "TensorFlow and PyTorch are the two most popular frameworks. TensorFlow was created by Google, while PyTorch came from Facebook's AI research lab.",
+    "start_time": 30.0,
+    "end_time": 60.0
+  },
+  {
+    "text": "Supervised learning uses labelled data. You give the model examples with correct answers. Classification and regression are the main types.",
+    "start_time": 60.0,
+    "end_time": 90.0
+  },
+  {
+    "text": "Unsupervised learning finds patterns without labels. Clustering groups similar items together. K-means is a common clustering algorithm.",
+    "start_time": 90.0,
+    "end_time": 120.0
+  },
+  {
+    "text": "Reinforcement learning is different. An agent learns by trial and error, receiving rewards for good actions. AlphaGo used this approach to beat world champions.",
+    "start_time": 120.0,
+    "end_time": 150.0
+  },
+  {
+    "text": "Transfer learning lets you reuse trained models. Instead of training from scratch, you fine-tune an existing model. This saves time and compute resources.",
+    "start_time": 150.0,
+    "end_time": 180.0
+  },
+  {
+    "text": "GPT and BERT revolutionised natural language processing. These transformer models understand context better than previous approaches. Attention mechanisms are the key innovation.",
+    "start_time": 180.0,
+    "end_time": 210.0
+  },
+  {
+    "text": "Computer vision uses convolutional neural networks. CNNs can recognise objects, faces, and scenes. Self-driving cars rely heavily on this technology.",
+    "start_time": 210.0,
+    "end_time": 240.0
+  }
+]
+
