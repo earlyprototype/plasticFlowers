@@ -37,7 +37,7 @@ Neo4j configuration is centralised in `backend/app/config.py` with environment v
 |-----------|-------|-------------|
 | `EMBEDDING_DIMENSIONS` | `768` | Vector dimensions (Google text-embedding-004) |
 | `EMBEDDING_SIMILARITY_FUNCTION` | `cosine` | Similarity metric for vector search |
-| `SIMILARITY_THRESHOLD` | `0.85` | Deduplication threshold |
+| `SIMILARITY_THRESHOLD` | `0.92` | Deduplication threshold |
 | `SIMILARITY_TOP_K` | `5` | Top candidates fetched before filtering |
 
 ---
@@ -55,7 +55,7 @@ Represents concepts extracted from transcripts.
 - `id` (string, unique): Stable identifier
 - `label` (string): Display label from transcript
 - `confidence` (float, 0-1): LLM certainty score
-- `mentions` (int): Reference count (similarity ≥0.85)
+- `mentions` (int): Reference count (similarity ≥0.92)
 - `timestamps` (float[]): Session-relative mention times
 - `inferred_type` (string): Emergent, freeform type
 - `embedding` (float[768]): Vector for similarity search
@@ -72,7 +72,7 @@ Connections between nodes with semantic metadata.
 - `id` (string, unique): Stable identifier
 - `source_id` (string): Source node ID
 - `target_id` (string): Target node ID
-- `category` (enum): `causal`, `structural`, `temporal`, `hierarchical`, `associative`
+- `category` (enum): `causal`, `structural`, `temporal`, `comparative`, `associative`
 - `source` (enum): `builder` or `gardener`
 - `label` (string, optional): Edge label (not currently used by LLM)
 - `description` (string): Natural language description of the relationship
@@ -236,7 +236,7 @@ This index enables semantic similarity search for deduplication and concept matc
 **Flow:**
 1. Generate embedding for incoming node label
 2. Query Neo4j vector index for top-K similar nodes (session-scoped)
-3. If best match ≥ 0.85 threshold:
+3. If best match ≥ 0.92 threshold:
    - Increment `mentions` counter
    - Append timestamp to existing node
    - Return `SimilarityMatchResult`
@@ -323,7 +323,7 @@ async def lifespan(app: FastAPI):
          │      └──────────────────┘
          │            │
          │            v
-         │      [Match ≥0.85?]
+         │      [Match ≥0.92?]
          │       /          \
          │    Yes            No
          │     │              │
