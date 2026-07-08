@@ -1,10 +1,10 @@
-# plasticFlower
+# plasticFlowers
 
 Local-first live mindmap that captures live speech, extracts an emergent knowledge graph via Gemini 2.5 Flash, and renders it in real time.
 
 ## Vision
 
-The goal of **plasticFlower** is to create a visual representation of spoken thought that:
+The goal of **plasticFlowers** is to create a visual representation of spoken thought that:
 1.  **Creates Context:** Maps the territory of a conversation, turning lists of facts into coherent "islands" of thought.
 2.  **Connects Key Elements:** Actively visualizes the bridges between ideas, revealing the narrative thread that ties concepts together.
 3.  **Is Digestible for Reference:** Produces an artifact that serves as an instant, easily navigable memory of the event—not just a transcript, but a structured cognitive map.
@@ -36,4 +36,4 @@ Refer to `_docs/_dev/_MVP/_structure/01_project_structure.md` for full structure
 Architecture and implementation choices are logged as they're made, not reconstructed after the fact.
 
 - `_docs/_dev/ADR/` — 13 Architecture Decision Records covering clustering, agent scheduling, similarity tuning, and other structural choices, each with context and consequences.
-- `_discovery/_repo/_INDEX.md` — build-vs-adopt analysis weighing plasticFlower's approach against existing open-source knowledge-graph projects (Graphiti, GraphRAG, and others).
+- `_discovery/_repo/_INDEX.md` — build-vs-adopt analysis weighing plasticFlowers' approach against existing open-source knowledge-graph projects (Graphiti, GraphRAG, and others).
