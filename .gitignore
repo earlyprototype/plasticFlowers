@@ -34,3 +34,8 @@ neo4j-data/
 *.tsbuildinfo
 *_log.txt
 _docs/_dev/_chat/
+
+# Build/tool artifacts (kept out after snapshot-branch cleanup)
+*.egg-info/
+*.tsbuildinfo
+.cursor/

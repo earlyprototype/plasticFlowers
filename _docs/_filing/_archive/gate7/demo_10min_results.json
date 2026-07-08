@@ -1,0 +1,29 @@
+{
+  "demo": "gate7-10min",
+  "timestamp": "2025-12-17T22:22:05.619075",
+  "session_id": "session_987b224d94244e88b0ec856706679190",
+  "chunks_submitted": 8,
+  "counts": {
+    "nodes": 54,
+    "relationships": 40,
+    "flowers": 0
+  },
+  "sample_nodes": [
+    "machine learning",
+    "software",
+    "neural networks",
+    "human brain",
+    "data",
+    "deep learning",
+    "layers",
+    "tensorflow",
+    "pytorch",
+    "google",
+    "facebook",
+    "ai research lab",
+    "supervised learning",
+    "labelled data",
+    "model"
+  ],
+  "success": true
+}

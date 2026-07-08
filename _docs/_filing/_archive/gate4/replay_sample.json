@@ -1,0 +1,18 @@
+[
+  {
+    "text": "Transformers rely on self attention to evaluate every token at once.",
+    "start_time": 0.0,
+    "end_time": 5.2
+  },
+  {
+    "text": "This parallelism enabled large language models that surpass recurrent approaches.",
+    "start_time": 5.2,
+    "end_time": 10.8
+  },
+  {
+    "text": "As attention weights highlight relationships, the Gardener can later merge overlapping nodes.",
+    "start_time": 10.8,
+    "end_time": 16.4
+  }
+]
+
