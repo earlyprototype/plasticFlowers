@@ -13,7 +13,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, TYPE_CHECKING
 
 from ..config import get_settings
 from ..models.reference import (
@@ -24,14 +24,12 @@ from ..models.reference import (
     SearchProvider,
     ENABLED_ENTITY_TYPES,
 )
-from ..services.llm import get_gemini_client
 from google.genai import types as genai_types
 
-from ..services.tavily_mcp import (
-    tavily_search,
-    TavilyMCPError,
-    TavilySearchResponse,
-)
+# Imported lazily inside methods to avoid an agents<->services circular import
+# (matches the pattern in builder.py / gardener.py). Type-only import here:
+if TYPE_CHECKING:
+    from ..services.tavily_mcp import TavilySearchResponse
 
 logger = logging.getLogger(__name__)
 
@@ -85,7 +83,8 @@ class ResearcherAgent:
             ResearcherAgentResult with the created ReferenceNode
         """
         from time import perf_counter
-        
+        from ..services.tavily_mcp import TavilyMCPError
+
         t0 = perf_counter()
         logger.info(
             "researcher.start session=%s node=%s label=%s type=%s",
@@ -159,7 +158,8 @@ class ResearcherAgent:
         query: str,
     ) -> ReferenceNode:
         """Perform research using Tavily MCP."""
-        
+        from ..services.tavily_mcp import tavily_search
+
         response = await tavily_search(
             query,
             max_results=5,
@@ -180,6 +180,8 @@ class ResearcherAgent:
         query: str,
     ) -> ReferenceNode:
         """Fallback: Use Gemini with Google Search grounding."""
+        from ..services.llm import get_gemini_client
+
         
         # Use Gardener model for fallback research as it's likely a Pro model capable of search
         model = self._settings.gemini_model_gardener
@@ -201,15 +203,8 @@ class ResearcherAgent:
                 model=model,
                 contents=prompt,
                 config=genai_types.GenerateContentConfig(
-                    tools=[genai_types.Tool(
-                        google_search_retrieval=genai_types.GoogleSearchRetrieval(
-                            dynamic_retrieval_config=genai_types.DynamicRetrievalConfig(
-                                mode=genai_types.DynamicRetrievalConfigMode.DYNAMIC_RETRIEVAL_CONFIG_MODE_UNSPECIFIED,
-                                dynamic_threshold=0.7,
-                            )
-                        )
-                    )],
-                    temperature=0.2, 
+                    tools=[genai_types.Tool(google_search=genai_types.GoogleSearch())],
+                    temperature=0.2,
                 )
             )
             
@@ -253,22 +248,13 @@ class ResearcherAgent:
                 fetched_at=datetime.now(timezone.utc),
             )
             
+        except ResearcherAgentError:
+            raise  # don't mask our own empty-response signal
         except Exception as exc:
-            logger.error("Gemini fallback failed: %s", exc)
-            # Last resort: Return a basic stub
-            return ReferenceNode(
-                id=f"ref_{uuid.uuid4().hex[:12]}",
-                node_id=node_id,
-                session_id=session_id,
-                entity_type=EntityType(entity_type) if entity_type in [e.value for e in EntityType] else EntityType.CONCEPT,
-                canonical_summary=f"Research failed for '{label}'. Provider errors: Tavily (primary), Gemini (fallback).",
-                sources=[],
-                confidence=0.0,
-                ambiguity_notes=f"All providers failed. Last error: {exc}",
-                needs_user_confirmation=True,
-                search_provider=SearchProvider.GEMINI,
-                fetched_at=datetime.now(timezone.utc),
-            )
+            logger.error("researcher.gemini_failed label=%s error=%s", label, exc)
+            raise ResearcherAgentError(
+                f"Gemini grounding failed for '{label}': {exc}", code="gemini_failed",
+            ) from exc
     
     def _create_reference_from_tavily(
         self,
