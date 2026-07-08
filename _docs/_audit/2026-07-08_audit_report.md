@@ -168,3 +168,26 @@ After the audit, the owner pushed local commits to two branches: `review/local-b
 **Debris it carries (should not land on `main`):** `backend/plasticflower_backend.egg-info/`, a stray `backend/5.0.0` file (pip-typo artifact), `frontend/tsconfig.tsbuildinfo`, ~25 `debug_*/blind_*/verify_*` log `.txt` files at repo root, `Untitled`, `image.png`, `.cursor/`, `@filing/`, plus a large number of one-off diagnostic scripts of mixed value.
 
 **Branch `claude/readme-fixes`:** two clean README commits off `main` (product-voice rewrite, name fix). Mergeable normally; coordinate with T14 to avoid conflicts.
+
+---
+
+## G. Branch inventory and consolidation (executed on PR #3's branch)
+
+Full inventory of the five branches, and what was done:
+
+| Branch | Nature | Status after consolidation |
+|---|---|---|
+| `main` | Baseline; broken as audited | Unchanged — becomes fixed when PR #3 merges |
+| `claude/repo-audit-tasks-uyydre` (PR #3) | Audit docs + **the consolidation itself** | Contains: audit docs, README rewrite (merged from `claude/readme-fixes`), the snapshot's 5 backend code fixes, `_dev/`, `_discovery/`, 82 `_docs` additions, root reports filed under `_docs/_dev/`, `@filing/` reports filed under `_docs/_filing/`, 31 diagnostic scripts, `.gitignore` hardening |
+| `claude/readme-fixes` | 2 clean README commits off main | **Merged into PR #3.** Safe to delete after PR #3 merges |
+| `neo4j-review-fixes` | Strict ancestor of `review/local-backend-additions` (verified) — adds nothing | Safe to delete once consolidation merges |
+| `review/local-backend-additions` | Full local-folder snapshot, unrelated history | All curated content salvaged into PR #3. **Keep as archive until PR #3 merges** (it still holds the deliberately-excluded debris and one-off debug drivers), then delete or rename to `archive/local-snapshot-2026-07` |
+
+**What was deliberately left on the snapshot branch (not salvaged):** `backend/plasticflower_backend.egg-info/`, stray `backend/5.0.0`, `frontend/tsconfig.tsbuildinfo`, ~25 root-level `debug_*/blind_*/verify_*` output `.txt` files, `Untitled`, `image.png` and `_GEMINI_API_Limits.png` (referenced by nothing), `.cursor/` and `.claude/workcoach-*` editor/tool state, and root one-off debug drivers (`check_config.py`, `read_test_output.py`, `verify_phase1–4.py`). Retrievable from the branch any time before it's deleted.
+
+**Relocations made during salvage (so files are findable):** root reports (`NEO4J_IMPLEMENTATION_SPEC`, `INFORMATION_FLOW_ANALYSIS`, `DEBOUNCE*`, `FLOWER_RELATIONSHIP*`, `GemReview`) → `_docs/_dev/`; `NEO4J_ARCHITECTURE_REPORT.md` updated in place to the snapshot's newer revision; `@filing/*` → `_docs/_filing/` (no collisions — verified); root `GARDENER_SYSTEM_OVERVIEW.md` skipped (byte-identical to the existing `_docs/_dev/` copy).
+
+**Audit findings revised by the salvaged content:**
+- **I3 resolved:** `_dev/`, `_discovery/`, and `_discovery/_repo/_INDEX.md` now exist — README's references are valid (and the merged README rewrite reads better anyway).
+- **I7 partly resolved:** the "missing" gate plan pack referenced by `SIGN_OFF_REPORT.md` exists as `_docs/_filing/_archive/plan_mvp_gates/01…07` — the doc's `_dev/_plan/...` paths still need updating to point there (added to T15).
+- **Verified post-consolidation:** `import app.main / app.agents / app.services` all succeed on this branch. `pytest` still fails at collection (T2), frontend build still fails (T3/T4) — Phase 0 continues from T2.
