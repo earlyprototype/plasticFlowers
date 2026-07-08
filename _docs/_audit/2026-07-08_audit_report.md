@@ -4,7 +4,9 @@
 **Scope:** entire repository — backend, frontend, docker, scripts, docs, git hygiene
 **Method:** every finding below was verified empirically, not just read: backend installed into a clean Python 3.11 venv and imported/exercised; frontend `npm install` + `tsc --noEmit` + `vitest run` + `next build`; docs cross-checked against code with grep/diff.
 
-**Companion file:** [`2026-07-08_remediation_tasks.md`](./2026-07-08_remediation_tasks.md) — self-contained task briefs (T1–T16) ready to hand to agents.
+**Companion file:** [`2026-07-08_remediation_tasks.md`](./2026-07-08_remediation_tasks.md) — self-contained task briefs (T0–T16) ready to hand to agents.
+
+> **Addendum (same day):** this audit was performed against `main`. After it was written, the owner pushed previously-local commits to `review/local-backend-additions` (and `neo4j-review-fixes` — the same line of work, one commit behind). See **Section F** at the end: that branch fixes several Critical findings (B1, B2, B9, part of B17) and contains the `_dev/`/`_discovery/` content README references (revising I3), but it is a **full working-folder snapshot with no shared git history with `main`** and carries substantial local debris. Task **T0** (salvage the branch) was added; affected task briefs carry a "Branch update" note. Everything else in this report still stands.
 
 ---
 
@@ -143,3 +145,26 @@ These change the task list, so they're flagged rather than assumed (tasks note t
 3. **Primary dev platform:** keep PowerShell as first-class and add bash, or move to a cross-platform Makefile/compose-based flow? *Default: add bash + Make targets alongside the .ps1.*
 4. **`LITE_ARCHITECTURE.md`:** archive here or split to its own repo? *Default: move under `_docs/_archive/`.*
 5. **Neo4j password `pfNeo4j2025!`:** if this was ever used on a reachable instance, rotate it. Removal from code is in T12 regardless.
+
+---
+
+## F. Addendum — the `review/local-backend-additions` branch (assessed same day)
+
+After the audit, the owner pushed local commits to two branches: `review/local-backend-additions` and `neo4j-review-fixes` (the same line of work; the former is one commit ahead). Verified findings:
+
+**Git shape:** the branch starts from a fresh `chore: initial snapshot` commit and shares **no history with `main`** (`git merge-base` returns nothing). It is a snapshot of the local working folder, not a continuation of the pushed history. Consequence: `git merge` will refuse ("unrelated histories"); the useful content must be salvaged onto `main` via diff-apply or cherry-pick — see task **T0**.
+
+**Real fixes it contains (verified by diff and by running it in a worktree):**
+- ✅ **B1 fixed** — `models/graph.py` imports `ReferenceNode` from `.reference`.
+- ✅ **B2 fixed** — agents↔services circular import broken via lazy imports in `researcher.py` (matches the existing pattern in builder/gardener). `import app.main / app.agents / app.services` all succeed.
+- ✅ **B9 fixed** — module-level `_logger` added in `graph_db.py`. **Bonus fix not in the audit:** `update_node` now uses `SET n += $node` (merge) instead of `SET n = $node` (replace), so absent properties — notably embeddings — are preserved on update.
+- ✅ **B17 partly fixed** — Gemini fallback migrated to the `google_search` tool (2.x-era), and the confidence-0 stub replaced with a raised `ResearcherAgentError` (no more silent fake references).
+- ✅ **I3 revised** — `_dev/` (5 files) and `_discovery/` (68 files, including the `_discovery/_repo/_INDEX.md` README cites) exist in the snapshot. The README wasn't describing imaginary directories; the content was simply never pushed to `main`.
+- ➕ `tests/test_llm.py` rewritten for the new `google-genai` SDK (a good base for T2) — **but** it still imports `from backend.app...`, so the suite still fails at collection (verified: 5 collection errors in the worktree). T2 still required.
+- ➕ New docs (`NEO4J_IMPLEMENTATION_SPEC.md`, threshold corrections) and many diagnostic scripts.
+
+**Still broken on that branch (verified):** everything else — the Tavily `include_answer=True` crash (B7), the `entity_type` endpoint bug (B8), all flower/`member_ids` failures (B3–B5; `scheduler.py`, `flower.py`, `gardener.py` are byte-identical to `main`), Gardener metrics/debounce (B14–B15), reference persistence (B16), the dependency manifests (B12), and the **entire frontend** (only a `tsconfig.tsbuildinfo` build artifact differs).
+
+**Debris it carries (should not land on `main`):** `backend/plasticflower_backend.egg-info/`, a stray `backend/5.0.0` file (pip-typo artifact), `frontend/tsconfig.tsbuildinfo`, ~25 `debug_*/blind_*/verify_*` log `.txt` files at repo root, `Untitled`, `image.png`, `.cursor/`, `@filing/`, plus a large number of one-off diagnostic scripts of mixed value.
+
+**Branch `claude/readme-fixes`:** two clean README commits off `main` (product-voice rewrite, name fix). Mergeable normally; coordinate with T14 to avoid conflicts.

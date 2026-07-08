@@ -10,7 +10,22 @@ Companion to [`2026-07-08_audit_report.md`](./2026-07-08_audit_report.md). Each 
 
 ## Phase 0 — restore boot and build
 
+### T0 — Salvage the `review/local-backend-additions` snapshot branch onto main  `[P0 — do first]`
+
+**Problem:** the owner's local working folder — containing real fixes made after `main` was last pushed — was committed as a fresh snapshot (`chore: initial snapshot`) and pushed to `review/local-backend-additions` (and `neo4j-review-fixes`, the same line one commit behind). The branch **shares no git history with `main`**, so `git merge` refuses with "unrelated histories". It mixes three kinds of content:
+1. **Real code fixes** (keep): `backend/app/models/graph.py` (ReferenceNode import — fixes the fatal boot bug), `backend/app/agents/researcher.py` (lazy imports breaking the agents↔services cycle + `google_search` grounding + raise-instead-of-stub), `backend/app/services/graph_db.py` (module `_logger` + `SET n +=` merge semantics preserving embeddings), `backend/app/models/node.py` (docstring), `backend/tests/test_llm.py` (new-SDK rewrite — imports still wrong, T2 finishes it).
+2. **Content `main` was always missing** (keep, review): `_dev/` and `_discovery/` trees (the directories README references), new docs (`NEO4J_IMPLEMENTATION_SPEC.md` etc.), possibly some diagnostic scripts worth keeping under `backend/scripts/diagnostics/`.
+3. **Local debris** (exclude): `backend/plasticflower_backend.egg-info/`, stray `backend/5.0.0` file, `frontend/tsconfig.tsbuildinfo`, `debug_*/blind_*/verify_*` `.txt` logs and one-off `verify_phase*.py` scripts at repo root, `Untitled`, `image.png`, `.cursor/`, `@filing/`, `*_log.txt`.
+
+**Do:** create a branch off `main`; apply the snapshot's changes selectively — `git diff main review/local-backend-additions -- backend/app backend/tests | git apply` for the code, `git checkout review/local-backend-additions -- _dev _discovery <chosen docs/scripts>` for content — excluding all debris. Extend `.gitignore` (`*.egg-info/`, `*.tsbuildinfo`, `.cursor/`) so the debris can't return. Commit with messages crediting the original fix commits. Also merge the small `claude/readme-fixes` branch (two clean README commits, normal history) or fold it into T14. Once merged to `main`, delete the snapshot branches to avoid confusion.
+
+**Accept:** on the new branch: `cd backend && python -c "import app.main; import app.agents; import app.services"` exits 0; `git diff main..HEAD --name-only` contains no egg-info/log/artifact files; `_discovery/_repo/_INDEX.md` exists; snapshot branches documented as superseded.
+
+---
+
 ### T1 — Fix the backend's fatal and circular imports  `[P0]`
+
+> **Branch update:** both fixes already exist on `review/local-backend-additions` and land via **T0**. Keep this brief as the specification/verification checklist; skip if T0 is merged.
 
 **Problem:** the backend cannot import at all.
 1. `backend/app/models/graph.py:17` does `from .research import ReferenceNode`, but no `research.py` exists — the class lives in `backend/app/models/reference.py`. Every entry point dies with `ModuleNotFoundError: No module named 'app.models.research'`.
@@ -24,7 +39,9 @@ Companion to [`2026-07-08_audit_report.md`](./2026-07-08_audit_report.md). Each 
 
 ---
 
-### T2 — Repair the backend test suite  `[P0]` `Depends on: T1`
+### T2 — Repair the backend test suite  `[P0]` `Depends on: T0/T1`
+
+> **Branch update:** `review/local-backend-additions` already rewrote `tests/test_llm.py` for the new SDK (use that version, landed via T0) — but it still imports `from backend.app...`, so collection still fails (verified: 5 errors). The import fix, pytest config, and loose-file exclusion below are all still required.
 
 **Problem:** `pytest` fails at collection: all 5 modules in `backend/tests/` import `from backend.app...`, which doesn't resolve when running from `backend/`. After fixing imports, `tests/test_llm.py` still can't pass: its autouse fixture does `monkeypatch.setattr(llm, "_MODEL", None)` and tests stub `llm.genai.configure` / `llm.genai.GenerativeModel` — artifacts of the legacy `google-generativeai` SDK. The code now uses the new `google-genai` SDK (`genai.Client`, module global `_CLIENT`, model-rotation list in `llm.py:48-52`). Also: no pytest config exists, so loose script files (`backend/test_embedding_exclusion.py`, `backend/scripts/test_*.py` — live-server scripts, not unit tests) get collected and error.
 
@@ -71,7 +88,9 @@ Failing tests: `stemPetalPositioning.test.ts:25,33,38` expect the old orbit form
 
 ## Phase 1 — revive the broken subsystems
 
-### T5 — Repair the Researcher pipeline (5 independent breaks)  `[P1]` `Depends on: T1`
+### T5 — Repair the Researcher pipeline (5 independent breaks)  `[P1]` `Depends on: T0/T1`
+
+> **Branch update:** points 3 and 4 below are fixed on `review/local-backend-additions` (landed via T0): the Gemini fallback now uses the `google_search` tool and raises `ResearcherAgentError` instead of returning a confidence-0 stub. Points 1, 2, 5 and the persistence bugs remain.
 
 **Problem:** no research ever completes, automatically or manually. Breaks, in pipeline order:
 1. `services/scheduler.py:868` — `action.label` but `ResearchAction` (`agents/gardener.py:78-97`) has no `label` field (has `action/node_id/entity_type/reason/priority`). `AttributeError` swallowed at `scheduler.py:877`.
@@ -100,7 +119,9 @@ Also fix root-cause masking: the broad `except Exception` at `scheduler.py:877` 
 
 ---
 
-### T7 — Fix graph_db query/persistence bugs  `[P1]` `Depends on: T1`
+### T7 — Fix graph_db query/persistence bugs  `[P1]` `Depends on: T0/T1`
+
+> **Branch update:** point 1 (module `_logger`) is fixed on `review/local-backend-additions` (via T0), which also improved `update_node` to `SET n +=` (merge, preserving embeddings). Points 2–6 remain.
 
 **Problem (all in `backend/app/services/graph_db.py`):**
 1. `:122` — `_logger` is referenced in `delete_node`'s error branch but only defined locally inside other functions → `NameError` whenever deleting a missing node. Add a module-level `logger = logging.getLogger(__name__)` and use it consistently.
@@ -206,7 +227,7 @@ Trigger on push + PR to main. No services needed (unit tests use fakes). Optiona
 ### T14 — Make README and GEMINI.md tell the truth  `[P3]`
 
 **Problem:**
-- `README.md:26-27` lists top-level `_dev/` and `_discovery/` directories that don't exist; `:39` cites `_discovery/_repo/_INDEX.md` (no such path — the closest content is `_docs/_dev/_MVP/_discovery/01_repositories.md`); quick start is Windows-only and skips dependency installation (coordinates with T11).
+- `README.md:26-27` lists top-level `_dev/` and `_discovery/` directories. **Branch update:** these exist in the `review/local-backend-additions` snapshot and land via T0 — after T0, verify the paths resolve (including `_discovery/_repo/_INDEX.md`) instead of deleting the references. Quick start is Windows-only and skips dependency installation (coordinates with T11). Also fold in or reconcile the `claude/readme-fixes` branch (README voice rewrite + name fix) to avoid conflicting edits.
 - `GEMINI.md` (AI-assistant context, so errors actively mislead every agent session): `:96-99` says Builder=`gemini-2.0-flash`, Gardener=`gemini-1.5-pro` — actual: `gemini-2.5-flash` for both (`backend/app/config.py:54-61`); `:120` says similarity threshold 0.85 — actual 0.92 (`config.py:110`, ADR-0008); `:179` says Gardener runs "every ~24 seconds" — actual: ratio-based, 1 Gardener run per 5 Builder chunks with a 5s debounce (`scheduler.py`, ADR-0010). `_docs/_runbook/MVP_DEMO.md:134,197,213` says 90 seconds — also wrong, fix to ratio-based wording.
 
 **Do:** rewrite the README repository-layout section to the real tree; fix the quick start (both platforms, includes installs — coordinate with T11's final commands); correct all GEMINI.md numbers/models/scheduling against `config.py` and the ADRs; fix the runbook's 90s claims.
@@ -242,7 +263,7 @@ Trigger on push + PR to main. No services needed (unit tests use fakes). Optiona
 
 ## Suggested agent batches
 
-- **Batch 1 (serial):** T1 → T2 → T3 → T4
+- **Batch 1 (serial):** T0 → T2 → T3 → T4 (T1 is subsumed by T0)
 - **Batch 2 (parallel after Batch 1):** T5, T6, T7, T8, T9
 - **Batch 3 (parallel):** T10, T11, T12 → then T13
 - **Batch 4 (parallel, last — touches files others edit):** T14, T15, T16
