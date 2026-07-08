@@ -1,39 +1,42 @@
 # plasticFlowers
 
-Local-first live mindmap that captures live speech, extracts an emergent knowledge graph via Gemini 2.5 Flash, and renders it in real time.
+Speak, and watch your thinking take shape. plasticFlowers listens to live speech, uses Gemini to pull out the ideas and the links between them, and grows a knowledge graph on screen in real time — local-first, no cloud.
 
-## Vision
+I wanted the opposite of a transcript. A transcript is a wall of text you have to re-read; I wanted to *see* a conversation's structure emerge as it happens — the islands of thought, the bridges between them — and be left with something worth looking at afterwards.
 
-The goal of **plasticFlowers** is to create a visual representation of spoken thought that:
-1.  **Creates Context:** Maps the territory of a conversation, turning lists of facts into coherent "islands" of thought.
-2.  **Connects Key Elements:** Actively visualizes the bridges between ideas, revealing the narrative thread that ties concepts together.
-3.  **Is Digestible for Reference:** Produces an artifact that serves as an instant, easily navigable memory of the event—not just a transcript, but a structured cognitive map.
-4.  **Is Beautiful:** Functions as a piece of generative art. The visualization should be aesthetically pleasing and "organic," inviting exploration rather than feeling like a sterile technical diagram.
+## What it's trying to be
+
+1. **Context, not a list.** Maps the territory of a conversation, turning scattered facts into coherent islands of thought.
+2. **Connections made visible.** Draws the bridges between ideas, surfacing the thread that ties concepts together.
+3. **A memory you can navigate.** You end up with an artifact you can come back to — an instant, browseable map of the event, not just a record of it.
+4. **Something beautiful.** The graph is meant to read as generative art: organic and physics-driven, inviting exploration rather than a sterile technical diagram.
 
 ## Quick start (MVP demo)
-- Ensure Docker Desktop, Node.js 18+, Python 3.11+ are installed.
-- Copy `.env.example` to `.env` and set:
-  - `NEO4J_URI=neo4j://127.0.0.1:7687`
-  - `NEO4J_PASSWORD=<your_password>`
-  - `GEMINI_API_KEY=<your_key>` (omit fake mode for real demo)
-- Start everything: `.\scripts\start_mvp.ps1` (add `-FakeMode` for offline testing).
-- Validate stack: `python backend/scripts/smoke_test.py --base http://127.0.0.1:8010 --output _docs/_evidence/gate7/smoke_test_results.json`.
-- Follow the runbook: `_docs/_runbook/MVP_DEMO.md`.
 
-## Repository layout
+You'll need Docker Desktop, Node.js 18+, and Python 3.11+.
 
-- `_docs/` — MVP specifications (alignment, architecture, contracts, prompts)
-- `_dev/` — Plan packs, gates, and director guidance
-- `_discovery/` — Research references and leverage guides
-- `backend/` — FastAPI application (MVP endpoints, Builder/Gardener agents)
-- `frontend/` — Next.js application (SSE monitor, filters, exports)
-- `docker/` — Container orchestration (Neo4j, auxiliary services)
+1. Copy `.env.example` to `.env` and set:
+   ```
+   NEO4J_URI=neo4j://127.0.0.1:7687
+   NEO4J_PASSWORD=<your_password>
+   GEMINI_API_KEY=<your_key>
+   ```
+2. Start everything: `.\scripts\start_mvp.ps1` — add `-FakeMode` to run offline with canned data (no API key needed).
+3. Open the frontend and start talking.
 
-Refer to `_docs/_dev/_MVP/_structure/01_project_structure.md` for full structure expectations and `_docs/_runbook/MVP_DEMO.md` for demo steps.
+To verify the stack end to end, there's a smoke test (`python backend/scripts/smoke_test.py`) and a full walkthrough in the runbook at `_docs/_runbook/MVP_DEMO.md`.
 
-## Engineering decisions
+## How it's built
 
-Architecture and implementation choices are logged as they're made, not reconstructed after the fact.
+- **`backend/`** — a FastAPI service running two agents: a **Builder** that extracts entities and relationships from the incoming speech, and a **Gardener** that continuously reorganises the graph as it grows.
+- **`frontend/`** — a Next.js app that streams updates live and renders the graph, with filters and exports.
+- **`docker/`** — Neo4j and the supporting services, orchestrated so the whole thing comes up with one command.
 
-- `_docs/_dev/ADR/` — 13 Architecture Decision Records covering clustering, agent scheduling, similarity tuning, and other structural choices, each with context and consequences.
-- `_discovery/_repo/_INDEX.md` — build-vs-adopt analysis weighing plasticFlowers' approach against existing open-source knowledge-graph projects (Graphiti, GraphRAG, and others).
+Planning docs, specifications, and prior-art research live under `_docs/`, `_dev/`, and `_discovery/`.
+
+## Decisions, logged as they happen
+
+Architecture choices are written down when they're made, not reconstructed after the fact.
+
+- **`_docs/_dev/ADR/`** — 13 Architecture Decision Records covering clustering, agent scheduling, similarity tuning, and other structural choices, each with its context and consequences.
+- **`_discovery/_repo/_INDEX.md`** — the build-vs-adopt analysis weighing plasticFlowers' approach against existing open-source knowledge-graph projects (Graphiti, GraphRAG, and others), so the reasoning for building custom is on record.
