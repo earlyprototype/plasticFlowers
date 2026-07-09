@@ -22,7 +22,7 @@ from ..agents import BuilderAgent, BuilderAgentError, BuilderAgentResult, Unreso
 from ..config import get_settings
 from ..models import Node, Relationship, RelationshipSource, TranscriptChunk
 from .embeddings import generate_embedding, is_fake_embeddings_enabled
-from .graph_db import create_node, create_relationship, list_nodes, list_relationships, save_chunk, record_node_mention, get_node
+from .graph_db import create_node, create_relationship, list_nodes, list_relationships, record_node_mention, get_node
 from .redis_streams import publish_chunk_added
 from .sse_manager import sse_manager
 from ..models import (
@@ -170,11 +170,13 @@ class BuilderService:
         resolved_rels = self._resolve_relationships(
             agent_result.relationships, label_to_id, existing_nodes
         )
+        # Note: the chunk itself is persisted by the API layer
+        # (api/chunks.py -> chunk_store.save) before Builder runs, so it is
+        # available for transcript/export even if this pipeline fails.
         if self._skip_neo4j:
             persisted_rels = resolved_rels
         else:
             persisted_rels = await self._persist_relationships(session_id, resolved_rels)
-            await save_chunk(chunk)
 
         # 5. Broadcast SSE events
         await self._broadcast_nodes(session_id, new_nodes)

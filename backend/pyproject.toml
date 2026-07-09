@@ -20,15 +20,14 @@ dependencies = [
     "numpy~=2.4",
     "httpx~=0.28",
     "httpx-sse~=0.4",
-    # `requests` is only imported (unused) in services/llm.py and
-    # services/embeddings.py; drop this pin when T16 removes those imports.
-    "requests~=2.34",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest~=9.1",
     "pytest-asyncio~=1.4",
+    # Used only by manual scripts (scripts/smoke_test.py, scripts/diagnostics/).
+    "requests~=2.34",
 ]
 
 [tool.pytest.ini_options]

@@ -80,7 +80,8 @@ async def submit_chunk(
         session_id=session_id,
     )
 
-    # Save to in-memory store for transcript context
+    # Persist the chunk to Neo4j (single save point: transcript context for
+    # the Gardener plus transcript/VTT/JSON export reads).
     await chunk_store.save(chunk)
 
     # Queue background processing

@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import socket
 import sys
 import time
@@ -27,13 +28,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-# Force IPv4 to avoid Windows IPv6 fallback delays (~21s per request)
-_original_getaddrinfo = socket.getaddrinfo
+# Optional Windows workaround (opt-in, mirrors app/main.py): force IPv4 to
+# avoid IPv6 fallback delays (~21s per request). Set PLASTICFLOWER_FORCE_IPV4=1.
+if os.getenv("PLASTICFLOWER_FORCE_IPV4", "").strip().lower() in {"1", "true", "yes", "on"}:
+    _original_getaddrinfo = socket.getaddrinfo
 
-def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+    def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
 
-socket.getaddrinfo = _ipv4_only_getaddrinfo
+    socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 import requests
 

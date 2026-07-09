@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getGraphState, getReferences } from "../lib/api";
+import { debugLog } from "../lib/debug";
 import type {
   Flower,
   GraphStateResponse,
@@ -145,7 +146,7 @@ export function useGraphState(sessionId: string | null | undefined) {
   }, [sessionId]);
 
   const handleEvent = useCallback((event: SSEvent) => {
-    console.log("[SSE] Received:", event.type, event.payload);
+    debugLog("[SSE] Received:", event.type, event.payload);
     // Defensive guard: skip malformed events with no payload rather than
     // crashing on e.g. `event.payload.id` (useSSE also filters these).
     if ((event as { payload?: unknown }).payload == null) {

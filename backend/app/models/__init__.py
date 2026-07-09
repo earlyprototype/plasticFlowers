@@ -66,7 +66,6 @@ __all__ = [
     "FlowersResponse",
     "Node",
     "SessionExportBundle",
-    "SessionExportBundle",
     "NodeAddedEvent",
     "NodeCorrectedEvent",
     "NodeCorrectedPayload",

@@ -101,14 +101,10 @@ async def test_similarity_check_disabled_creates_all_ghost_nodes(monkeypatch):
     
     async def fake_list_relationships(*args, **kwargs):
         return []
-    
-    async def fake_save_chunk(*args):
-        pass
-    
+
     monkeypatch.setattr(builder_service, "create_node", fake_create_node)
     monkeypatch.setattr(builder_service, "list_nodes", fake_list_nodes)
     monkeypatch.setattr(builder_service, "list_relationships", fake_list_relationships)
-    monkeypatch.setattr(builder_service, "save_chunk", fake_save_chunk)
     
     # Mock SSE manager
     mock_sse = AsyncMock()
@@ -270,13 +266,9 @@ async def test_similarity_check_enabled_performs_deduplication(monkeypatch):
     
     async def fake_list_relationships(*args, **kwargs):
         return []
-    
-    async def fake_save_chunk(*args):
-        pass
-    
+
     monkeypatch.setattr(builder_service, "list_nodes", fake_list_nodes)
     monkeypatch.setattr(builder_service, "list_relationships", fake_list_relationships)
-    monkeypatch.setattr(builder_service, "save_chunk", fake_save_chunk)
     
     # Mock SSE manager
     mock_sse = AsyncMock()
@@ -356,3 +348,52 @@ async def test_persist_relationships_skips_none_from_missing_nodes(monkeypatch):
     assert len(broadcasts) == 1
     assert isinstance(broadcasts[0], RelationshipAddedEvent)
     assert broadcasts[0].payload.id == "rel-ok"
+
+
+@pytest.mark.asyncio
+async def test_similarity_below_threshold_creates_new_node(monkeypatch):
+    """A candidate below similarity_threshold must create a new GHOST node,
+    never record a mention (covers the create branch of
+    _check_similarity_and_persist; equivalent coverage previously lived in
+    the removed similarity.run_similarity tests)."""
+    from app.config import Settings
+    from app.services import builder_service
+
+    settings = Settings(
+        similarity_check_enabled=True,
+        similarity_threshold=0.92,
+        neo4j_uri="bolt://localhost:7687",
+        neo4j_username="neo4j",
+        neo4j_password="test",
+        redis_url="redis://localhost:6379",
+    )
+    monkeypatch.setattr(builder_service, "get_settings", lambda: settings)
+
+    async def fake_embed(label: str, language: str = "en"):
+        return [0.1, 0.2, 0.3]
+
+    async def fake_query_best_match(session_id: str, embedding, top_k: int):
+        from app.services.similarity import _MatchCandidate
+        return _MatchCandidate(node_id="node-other", score=0.5)  # below 0.92
+
+    async def fail_record_mention(*args, **kwargs):
+        raise AssertionError("record_node_mention must not run below threshold")
+
+    created_nodes: list[Node] = []
+
+    async def fake_create_node(session_id: str, node: Node) -> Node:
+        created_nodes.append(node)
+        return node
+
+    monkeypatch.setattr(builder_service, "generate_embedding", fake_embed)
+    monkeypatch.setattr(builder_service, "_query_best_match", fake_query_best_match)
+    monkeypatch.setattr(builder_service, "record_node_mention", fail_record_mention)
+    monkeypatch.setattr(builder_service, "create_node", fake_create_node)
+
+    service = BuilderService()
+    node = _make_node("new concept", "node-new")
+    results = await service._check_similarity_and_persist("session-1", [node], 1.0)
+
+    assert len(results) == 1
+    assert results[0].is_match is False
+    assert created_nodes == [node], "below-threshold candidate must create a node"

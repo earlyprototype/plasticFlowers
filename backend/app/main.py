@@ -1,11 +1,19 @@
 """PlasticFlower backend FastAPI application."""
 
-# Force IPv4 to avoid Windows IPv6 fallback delays (~21s per connection)
-import socket
-_original_getaddrinfo = socket.getaddrinfo
-def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-socket.getaddrinfo = _ipv4_only_getaddrinfo
+import os
+
+# Optional Windows workaround: force IPv4 to avoid IPv6 fallback delays
+# (~21s per connection). Opt-in via PLASTICFLOWER_FORCE_IPV4=1 rather than
+# monkey-patching every process unconditionally.
+if os.getenv("PLASTICFLOWER_FORCE_IPV4", "").strip().lower() in {"1", "true", "yes", "on"}:
+    import socket
+
+    _original_getaddrinfo = socket.getaddrinfo
+
+    def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+        return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+    socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 import sys
 import asyncio
@@ -15,7 +23,6 @@ if sys.platform == "win32":
 
 from contextlib import asynccontextmanager
 import logging
-import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware

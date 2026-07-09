@@ -138,9 +138,10 @@ export default function HomePage() {
     event.preventDefault();
     const value = sessionInput.trim();
     if (value) {
+      // useGraphState refreshes on the sessionId change; calling the current
+      // refreshGraph here would hit the OLD session (stale closure).
       setSessionId(value);
       setSessionEnded(false);
-      void refreshGraph();
     }
   };
 

@@ -8,52 +8,16 @@ from __future__ import annotations
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass
-from functools import lru_cache
-from typing import Dict, List, Optional, Union
+from typing import List, Optional
 
 import numpy as np
 
 from ..config import get_settings
-from ..models import Node
 from .embeddings import generate_embedding
-from .graph_db import record_node_mention
 from .graph_schema import NODE_EMBEDDING_INDEX
 from .neo4j import get_driver
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(slots=True)
-class SimilarityBaseResult:
-    embedding: List[float]
-
-
-@dataclass(slots=True)
-class SimilarityMatchResult(SimilarityBaseResult):
-    node: Node
-    score: float
-
-
-@dataclass(slots=True)
-class SimilarityCreateResult(SimilarityBaseResult):
-    """Indicates caller should create a new ghost node."""
-
-
-SimilarityResult = Union[SimilarityMatchResult, SimilarityCreateResult]
-
-
-async def run_similarity(session_id: str, label: str, timestamp: float) -> SimilarityResult:
-    """Run the embedding + vector search flow and return the decision."""
-
-    settings = get_settings()
-    embedding = await generate_embedding(label)
-    candidate = await _query_best_match(session_id, embedding, settings.similarity_top_k)
-
-    if candidate and candidate.score >= settings.similarity_threshold:
-        updated_node = await record_node_mention(session_id, candidate.node_id, timestamp)
-        return SimilarityMatchResult(embedding=embedding, node=updated_node, score=candidate.score)
-
-    return SimilarityCreateResult(embedding=embedding)
 
 
 @dataclass(slots=True)
@@ -203,10 +167,6 @@ def clear_type_cache() -> None:
 
 
 __all__ = [
-    "run_similarity",
-    "SimilarityResult",
-    "SimilarityMatchResult",
-    "SimilarityCreateResult",
     "types_compatible",
     "clear_type_cache",
 ]

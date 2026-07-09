@@ -2,8 +2,8 @@
 
 This module provides an event bus for decoupled communication between agents:
 - Builder publishes `chunks.added` when new transcript chunks are processed
-- Gardener consumes events and publishes `nodes.needs_research`
-- Researcher/Librarian consume research events
+- Gardener consumes chunk events and publishes `nodes.needs_research`
+- Researcher consumes research events
 
 Spec reference: _docs/_dev/_MVP/_schema/02_redis_streams.md (if exists)
 """
@@ -27,9 +27,7 @@ logger = logging.getLogger(__name__)
 # -----------------------------------------------------------------------------
 
 STREAM_CHUNKS_ADDED = "pf:chunks:added"  # Builder -> Gardener
-STREAM_NODES_CREATED = "pf:nodes:created"  # Builder -> (future agents)
 STREAM_NODES_NEEDS_RESEARCH = "pf:nodes:needs_research"  # Gardener -> Researcher
-STREAM_GARDENER_COMPLETE = "pf:gardener:complete"  # Gardener -> SSE broadcast
 
 # Consumer group names
 GROUP_GARDENER = "gardener"
@@ -59,16 +57,6 @@ class NodeNeedsResearchEvent(BaseModel):
     entity_type: str = Field(..., description="Inferred entity type")
     research_reason: str = Field(..., description="Why research is needed")
     priority: str = Field("normal", description="Research priority: high or normal")
-    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-
-
-class GardenerCompleteEvent(BaseModel):
-    """Event published when Gardener completes a cycle."""
-    session_id: str = Field(..., description="Session identifier")
-    nodes_solidified: int = Field(0, description="Nodes promoted to SOLID")
-    nodes_removed: int = Field(0, description="Nodes deleted")
-    flowers_created: int = Field(0, description="Flowers created")
-    corrections_applied: int = Field(0, description="STT corrections applied")
     timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
@@ -330,25 +318,6 @@ async def publish_chunk_added(
     return await publish_event(STREAM_CHUNKS_ADDED, event)
 
 
-async def publish_gardener_complete(
-    session_id: str,
-    *,
-    nodes_solidified: int = 0,
-    nodes_removed: int = 0,
-    flowers_created: int = 0,
-    corrections_applied: int = 0,
-) -> str:
-    """Publish a gardener.complete event (called by Gardener)."""
-    event = GardenerCompleteEvent(
-        session_id=session_id,
-        nodes_solidified=nodes_solidified,
-        nodes_removed=nodes_removed,
-        flowers_created=flowers_created,
-        corrections_applied=corrections_applied,
-    )
-    return await publish_event(STREAM_GARDENER_COMPLETE, event)
-
-
 async def publish_node_needs_research(
     session_id: str,
     node_id: str,
@@ -394,23 +363,19 @@ async def redis_health_check() -> Dict[str, Any]:
 __all__ = [
     # Stream names
     "STREAM_CHUNKS_ADDED",
-    "STREAM_NODES_CREATED", 
     "STREAM_NODES_NEEDS_RESEARCH",
-    "STREAM_GARDENER_COMPLETE",
     # Group names
     "GROUP_GARDENER",
     "GROUP_RESEARCHER",
     # Event types
     "ChunkAddedEvent",
     "NodeNeedsResearchEvent",
-    "GardenerCompleteEvent",
     # Connection
     "get_redis",
     "close_redis",
     # Publishing
     "publish_event",
     "publish_chunk_added",
-    "publish_gardener_complete",
     "publish_node_needs_research",
     # Consuming
     "ensure_consumer_group",

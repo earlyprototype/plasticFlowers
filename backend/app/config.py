@@ -143,18 +143,13 @@ class Settings(BaseSettings):
         description="Number of Builder runs before triggering one Gardener run. E.g., 5 = every 5 chunks processed.",
     )
 
-    # Agent enable flags - allow disabling agents for debugging/testing
-    builder_enabled: bool = Field(
-        True,
-        description="Enable Builder agent processing. Set false to skip extraction.",
-    )
-    gardener_enabled: bool = Field(
-        True,
-        description="Enable Gardener agent scheduling. Set false to skip graph maintenance.",
-    )
     researcher_enabled: bool = Field(
         True,
-        description="Enable Researcher agent for external enrichment (Phase 3).",
+        description=(
+            "Enable automatic Researcher dispatch: the Gardener scheduler checks "
+            "this before publishing research triggers. Manual research via "
+            "POST /sessions/{id}/nodes/{node_id}/research is unaffected."
+        ),
     )
     tavily_api_key: SecretStr = Field(
         SecretStr(""),
@@ -163,10 +158,6 @@ class Settings(BaseSettings):
     tavily_mcp_url: str = Field(
         "https://mcp.tavily.com/mcp/",
         description="Tavily remote MCP server URL.",
-    )
-    librarian_enabled: bool = Field(
-        True,
-        description="Enable Librarian Q&A agent (Phase E).",
     )
     similarity_check_enabled: bool = Field(
         True,

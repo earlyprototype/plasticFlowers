@@ -250,6 +250,35 @@ async def test_publish_research_actions_survives_publish_failure(monkeypatch, ca
     assert failure_records[0].exc_info is not None, "traceback should be included"
 
 
+async def test_publish_research_actions_respects_researcher_enabled(monkeypatch):
+    """RESEARCHER_ENABLED=false must gate automatic dispatch entirely."""
+    published: list[dict] = []
+
+    async def fake_publish(**kwargs):
+        published.append(kwargs)
+        return "1-0"
+
+    monkeypatch.setattr(scheduler_module, "publish_node_needs_research", fake_publish)
+    monkeypatch.setattr(
+        scheduler_module,
+        "get_settings",
+        lambda: SimpleNamespace(researcher_enabled=False),
+    )
+
+    node = _make_node("node-1", "CeADAR")
+    action = ResearchAction(
+        node_id="node-1",
+        entity_type="organisation",
+        reason="first mention",
+        priority="high",
+    )
+
+    scheduler = GardenerScheduler()
+    await scheduler._publish_research_actions("session-1", [action], {node.id: node})
+
+    assert published == [], "no research dispatch when researcher_enabled is false"
+
+
 # -----------------------------------------------------------------------------
 # Manual research endpoint uses Node.inferred_type
 # -----------------------------------------------------------------------------

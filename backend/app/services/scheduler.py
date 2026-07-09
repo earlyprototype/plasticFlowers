@@ -64,12 +64,12 @@ from .graph_db import (
     update_session_vocabulary,
     upsert_flower,
 )
+from ..config import get_settings
 from .llm import is_fake_llm_enabled
 from .redis_streams import (
     ack_event,
     consume_events,
     flush_stale_events,
-    publish_gardener_complete,
     publish_node_needs_research,
     STREAM_CHUNKS_ADDED,
     GROUP_GARDENER,
@@ -138,16 +138,10 @@ class GardenerScheduler:
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._last_run: Dict[str, float] = {}
-        self._active_sessions: set[str] = set()  # Track sessions with SSE clients
         self._safety_debounce_seconds: float = self.DEFAULT_SAFETY_DEBOUNCE_SECONDS
 
-    def mark_activity(self, session_id: str) -> None:
-        """Note that a session is active (has SSE clients watching)."""
-        self._active_sessions.add(session_id)
-
     def clear_activity(self, session_id: str) -> None:
-        """Clear activity tracking for a session (called when session ends)."""
-        self._active_sessions.discard(session_id)
+        """Drop per-session scheduling state (called when a session ends)."""
         self._last_run.pop(session_id, None)
 
     async def start(self) -> None:
@@ -195,7 +189,6 @@ class GardenerScheduler:
         Minimal safety debounce (5s) prevents rapid consecutive runs if
         there's unexpected Redis burst.
         """
-        from ..config import get_settings
         settings = get_settings()
         ratio = settings.builder_gardener_ratio
 
@@ -300,12 +293,8 @@ class GardenerScheduler:
         t_start = perf_counter()
         
         try:
-            # DIAGNOSTIC: Log session_id before querying
-            logger.warning(
-                "gardener.TIMING_START session_id=%s",
-                session_id,
-            )
-            
+            logger.debug("gardener.timing_start session_id=%s", session_id)
+
             t1 = perf_counter()
             ghost_nodes, solid_nodes, relationships, flowers = await asyncio.gather(
                 list_nodes(session_id, status=NodeStatus.GHOST),
@@ -314,9 +303,9 @@ class GardenerScheduler:
                 list_flowers(session_id),
             )
             t2 = perf_counter()
-            
-            logger.warning(
-                "gardener.TIMING_DB_LOAD session=%s ms=%.0f ghosts=%d solids=%d rels=%d flowers=%d",
+
+            logger.debug(
+                "gardener.timing_db_load session=%s ms=%.0f ghosts=%d solids=%d rels=%d flowers=%d",
                 session_id,
                 (t2-t1)*1000,
                 len(ghost_nodes),
@@ -361,12 +350,12 @@ class GardenerScheduler:
             session_context = await get_session_context(session_id)
             
             t3 = perf_counter()
-            logger.warning(
-                "gardener.TIMING_PREP_DONE session=%s prep_ms=%.0f calling_llm...",
+            logger.debug(
+                "gardener.timing_prep_done session=%s prep_ms=%.0f calling_llm...",
                 session_id,
                 (t3-t2)*1000,
             )
-            
+
             result = await self._agent.run(
                 ghost_nodes=ghost_nodes,
                 solid_nodes=solid_nodes,
@@ -378,14 +367,14 @@ class GardenerScheduler:
             )
             
             t4 = perf_counter()
-            logger.warning(
-                "gardener.TIMING_LLM_DONE session=%s llm_total_ms=%.0f",
+            logger.debug(
+                "gardener.timing_llm_done session=%s llm_total_ms=%.0f",
                 session_id,
                 (t4-t3)*1000,
             )
 
-            # Diagnostic logging for Gardener results
-            logger.warning(
+            # Per-cycle summary of what the LLM returned
+            logger.info(
                 "gardener.agent_complete session=%s node_actions=%d flower_actions=%d corrections=%d new_rels=%d llm_ms=%.0f ghosts=%d solids=%d",
                 session_id,
                 len(result.node_actions),
@@ -400,14 +389,14 @@ class GardenerScheduler:
             # Log individual actions for debugging
             if result.node_actions:
                 for action in result.node_actions[:10]:  # Limit to first 10
-                    logger.warning("  gardener.node_action: %s node=%s merge_into=%s reason=%s", 
+                    logger.debug("  gardener.node_action: %s node=%s merge_into=%s reason=%s",
                         action.action, action.node_id, action.merge_into, action.reason[:50] if action.reason else "")
             else:
-                logger.warning("  gardener.NO_NODE_ACTIONS returned by LLM - ghosts will remain ghosts!")
-                
+                logger.debug("  gardener.no_node_actions returned by LLM - ghosts will remain ghosts")
+
             if result.flower_actions:
                 for action in result.flower_actions[:5]:
-                    logger.warning("  gardener.flower_action: %s flower=%s label=%s members=%d",
+                    logger.debug("  gardener.flower_action: %s flower=%s label=%s members=%d",
                         action.action, action.flower_id, action.label, len(action.member_ids))
 
             # Apply actions in deterministic order: nodes -> relationships -> flowers -> heartbeat
@@ -428,8 +417,6 @@ class GardenerScheduler:
 
             await self._apply_node_actions(session_id, result.node_actions, nodes_by_id, relationships_by_id)
 
-            # Refresh relationships after node actions
-            relationships_after_nodes = await list_relationships(session_id)
             await self._apply_new_relationships(session_id, result.new_relationships)
 
             # Refresh current state for flowers
@@ -456,19 +443,19 @@ class GardenerScheduler:
                 await self._publish_research_actions(
                     session_id, result.research_actions, nodes_by_id
                 )
-            
-            # Phase D.5: Publish completion event to Redis
-            try:
-                nodes_solidified, nodes_removed = _summarise_node_actions(result.node_actions)
-                await publish_gardener_complete(
-                    session_id=session_id,
-                    nodes_solidified=nodes_solidified,
-                    nodes_removed=nodes_removed,
-                    flowers_created=len([a for a in result.flower_actions if a.action == "create"]),
-                    corrections_applied=len(result.corrections),
-                )
-            except Exception as redis_err:
-                logger.warning("gardener.redis_publish_failed session=%s error=%s", session_id, redis_err)
+
+            # Cycle completion metrics (the UI gets its cycle tick via the SSE
+            # GardenerCycleEvent below; the old pf:gardener:complete Redis
+            # stream had no consumer and was removed).
+            nodes_solidified, nodes_removed = _summarise_node_actions(result.node_actions)
+            logger.info(
+                "gardener.cycle_summary session=%s solidified=%d removed=%d flowers_created=%d corrections=%d",
+                session_id,
+                nodes_solidified,
+                nodes_removed,
+                len([a for a in result.flower_actions if a.action == "create"]),
+                len(result.corrections),
+            )
         finally:
             await sse_manager.broadcast(
                 session_id,
@@ -892,7 +879,17 @@ class GardenerScheduler:
         ResearchAction carries only node_id/entity_type/reason/priority
         (the Gardener prompt does not ask the LLM for a label), so the
         node's label is resolved from the graph at dispatch time.
+
+        Automatic dispatch honours the RESEARCHER_ENABLED flag; the manual
+        endpoint (POST .../nodes/{id}/research) bypasses this gate.
         """
+        if not get_settings().researcher_enabled:
+            logger.info(
+                "gardener.research_dispatch_disabled session=%s skipped=%d (RESEARCHER_ENABLED=false)",
+                session_id,
+                len(actions),
+            )
+            return
         nodes_by_id = nodes_by_id or {}
         for action in actions:
             try:

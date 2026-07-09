@@ -34,7 +34,6 @@ export function syncGraphStructure(
   };
   
   // Build lookup sets
-  const flowerMap = new Map(data.flowers.map((f) => [f.id, f]));
   const stemLookup = new Set(data.flowers.map((f) => f.stem_node_id).filter(Boolean));
   
   // 1. Sync flowers (compound nodes)
@@ -226,10 +225,11 @@ function syncEdges(
     
     const existing = cy.getElementById(relationship.id);
     if (existing && existing.nonempty()) {
-      // Update existing edge
+      // Update existing edge in place. Edge updates are intentionally not
+      // recorded in the SyncResult: updatedNodeIds is a node/flower set and
+      // no consumer needs updated-edge ids.
       existing.data(elementData);
       existing.classes(classes.join(' '));
-      result.updatedNodeIds.add(relationship.id);
     } else {
       // Create new edge
       cy.add({

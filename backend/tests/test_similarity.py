@@ -10,68 +10,6 @@ from app.services.graph_schema import NODE_EMBEDDING_INDEX
 from .fakes import FakeNeo4jDriver
 
 
-def _node() -> Node:
-    return Node(
-        id="node-123",
-        label="vector search",
-        confidence=0.9,
-        mentions=1,
-        timestamps=[0.5],
-        inferred_type="concept",
-        flower_id=None,
-        embedding=None,
-        created_at=datetime.now(timezone.utc),
-        status=NodeStatus.GHOST,
-    )
-
-
-@pytest.mark.asyncio
-async def test_run_similarity_returns_match(monkeypatch):
-    node = _node()
-
-    async def fake_embed(label: str, language: str = "en"):
-        return [0.1, 0.2, 0.3]
-
-    async def fake_query(session_id: str, embedding, top_k: int):
-        return similarity._MatchCandidate(node_id=node.id, score=0.93)
-
-    async def fake_record(session_id: str, node_id: str, timestamp: float):
-        assert node_id == node.id
-        return node
-
-    monkeypatch.setattr(similarity, "generate_embedding", fake_embed)
-    monkeypatch.setattr(similarity, "_query_best_match", fake_query)
-    monkeypatch.setattr(similarity, "record_node_mention", fake_record)
-
-    result = await similarity.run_similarity("session-1", "Vector search", 3.0)
-
-    assert isinstance(result, similarity.SimilarityMatchResult)
-    assert result.node == node
-    assert result.score == pytest.approx(0.93)
-    assert result.embedding == [0.1, 0.2, 0.3]
-
-
-@pytest.mark.asyncio
-async def test_run_similarity_returns_create_when_below_threshold(monkeypatch):
-    async def fake_embed(label: str, language: str = "en"):
-        return [0.0, 0.0, 0.0]
-
-    async def fake_query(session_id: str, embedding, top_k: int):
-        return similarity._MatchCandidate(node_id="node-xyz", score=0.2)
-
-    async def fake_record(*args, **kwargs):
-        raise AssertionError("record_node_mention should not be called")
-
-    monkeypatch.setattr(similarity, "generate_embedding", fake_embed)
-    monkeypatch.setattr(similarity, "_query_best_match", fake_query)
-    monkeypatch.setattr(similarity, "record_node_mention", fake_record)
-
-    result = await similarity.run_similarity("session-1", "New concept", 5.0)
-
-    assert isinstance(result, similarity.SimilarityCreateResult)
-    assert result.embedding == [0.0, 0.0, 0.0]
-
-
 @pytest.mark.asyncio
 async def test_query_best_match_hits_vector_index(monkeypatch):
     driver = FakeNeo4jDriver([[{"node_id": "node-1", "score": 0.88}]])
@@ -162,62 +100,9 @@ async def test_types_incompatible_distinct_types(monkeypatch):
 
 
 # Integration tests for pre-creation similarity check (ADR-011)
-
-
-@pytest.mark.asyncio
-async def test_pre_creation_similarity_match_existing(monkeypatch):
-    """Pre-creation check should match existing node and increment mentions."""
-    existing_node = Node(
-        id="node-ml-1",
-        label="Machine Learning",
-        confidence=0.85,
-        mentions=1,
-        timestamps=[1.0],
-        inferred_type="concept",
-        flower_id=None,
-        embedding=[0.9, 0.1, 0.0],
-        created_at=datetime.now(timezone.utc),
-        status=NodeStatus.GHOST,
-    )
-    
-    # After mention is recorded, mentions should increment
-    updated_node = Node(
-        id="node-ml-1",
-        label="Machine Learning",
-        confidence=0.85,
-        mentions=2,
-        timestamps=[1.0, 2.5],
-        inferred_type="concept",
-        flower_id=None,
-        embedding=[0.9, 0.1, 0.0],
-        created_at=datetime.now(timezone.utc),
-        status=NodeStatus.GHOST,
-    )
-    
-    async def fake_embed(label: str, language: str = "en"):
-        # Similar embedding for "machine learning"
-        return [0.9, 0.1, 0.0]
-    
-    async def fake_query(session_id: str, embedding, top_k: int):
-        # Return high similarity match
-        return similarity._MatchCandidate(node_id="node-ml-1", score=0.95)
-    
-    async def fake_record(session_id: str, node_id: str, timestamp: float):
-        # Verify correct node is being updated
-        assert node_id == "node-ml-1"
-        return updated_node
-    
-    monkeypatch.setattr(similarity, "generate_embedding", fake_embed)
-    monkeypatch.setattr(similarity, "_query_best_match", fake_query)
-    monkeypatch.setattr(similarity, "record_node_mention", fake_record)
-    
-    result = await similarity.run_similarity("session-1", "machine learning", 2.5)
-    
-    # Should match existing node, not create new
-    assert isinstance(result, similarity.SimilarityMatchResult)
-    assert result.node.id == "node-ml-1"
-    assert result.node.mentions == 2
-    assert result.score == pytest.approx(0.95)
+# Note: the match/create decision itself lives in
+# builder_service._check_similarity_and_persist and is covered by
+# tests/test_builder_service.py (the old run_similarity helper was removed).
 
 
 @pytest.mark.asyncio
@@ -331,36 +216,13 @@ async def test_similarity_check_enabled_flag_exists():
 
 
 @pytest.mark.asyncio
-async def test_low_confidence_skips_similarity(monkeypatch):
-    """Verify that confidence threshold logic can be tested."""
+async def test_similarity_threshold_configured():
+    """The similarity threshold used by builder_service must be configured.
+
+    The confidence threshold (0.7) and the below-threshold create path are
+    enforced in builder_service.py and covered by test_builder_service.py.
+    """
     from app.config import get_settings
-    
+
     settings = get_settings()
-    
-    # Note: The confidence threshold (0.7) is enforced in builder_service.py,
-    # not in similarity.py. This test verifies the threshold is configured correctly.
-    # The actual enforcement is tested in builder_service integration tests.
-    
-    # Verify similarity threshold is configured
-    assert settings.similarity_threshold >= 0.0
-    assert settings.similarity_threshold <= 1.0
-    
-    # Test that low similarity scores are handled correctly
-    async def fake_embed(label: str, language: str = "en"):
-        return [0.1, 0.2, 0.3]
-    
-    async def fake_query(session_id: str, embedding, top_k: int):
-        # Return low similarity score (below threshold)
-        return similarity._MatchCandidate(node_id="node-ai", score=0.5)
-    
-    async def fake_record(*args, **kwargs):
-        raise AssertionError("Should not record mention for low similarity")
-    
-    monkeypatch.setattr(similarity, "generate_embedding", fake_embed)
-    monkeypatch.setattr(similarity, "_query_best_match", fake_query)
-    monkeypatch.setattr(similarity, "record_node_mention", fake_record)
-    
-    result = await similarity.run_similarity("session-1", "AI", 1.0)
-    
-    # Low score should result in CreateResult, not MatchResult
-    assert isinstance(result, similarity.SimilarityCreateResult)
+    assert 0.0 <= settings.similarity_threshold <= 1.0
