@@ -19,6 +19,7 @@ import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .api import api_router
 from .services import (
@@ -87,11 +88,31 @@ app.add_middleware(
 
 
 @app.get("/health", tags=["system"])
-async def read_health() -> dict[str, str]:
-    """Readiness probe that verifies Neo4j connectivity."""
+async def read_health():
+    """Readiness probe that verifies Neo4j connectivity.
 
-    await run_healthcheck()
-    return {"status": "ok"}
+    Returns a structured degraded response (503) instead of letting Neo4j
+    exceptions propagate as raw 500s. Under PLASTICFLOWER_SKIP_NEO4J the
+    Neo4j check is skipped entirely and reported as such.
+    """
+
+    if _SKIP_NEO4J:
+        return {"status": "ok", "neo4j": "skipped"}
+
+    try:
+        await run_healthcheck()
+    except Exception as exc:
+        logger.warning("health.neo4j_check_failed error=%s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "neo4j": "unavailable",
+                "detail": str(exc),
+            },
+        )
+
+    return {"status": "ok", "neo4j": "ok"}
 
 
 # Gate 2 routers -------------------------------------------------------------

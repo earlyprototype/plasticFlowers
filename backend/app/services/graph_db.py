@@ -194,8 +194,10 @@ async def list_nodes(
         if status:
             where_clauses.append("n.status = $status")
             params["status"] = status.value if isinstance(status, NodeStatus) else status
-        
-        where_sql = f"AND {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        # Extra filters need a WHERE clause — a bare "AND" after the MATCH
+        # is invalid Cypher (500s the endpoint when both filters are set).
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
         params["flower_id"] = flower_id
         query = f"""
         MATCH (n:Node {{session_id: $session_id}})-[:BELONGS_TO]->(f:Flower {{id: $flower_id}})
@@ -670,16 +672,30 @@ async def update_session_record(
 
 
 async def delete_session_record(session_id: str) -> None:
-    """Delete a Session and all associated data (nodes, relationships, flowers, chunks)."""
+    """Delete a Session and ALL associated data.
+
+    Covers nodes, relationships, flowers, chunks plus the session-scoped
+    side-car nodes (Reference, SessionVocabulary, ProofreadCheckpoint,
+    SessionContext) and any Source nodes left without citations — these were
+    previously orphaned on delete.
+    """
 
     driver = await get_driver()
 
-    # Delete in order: relationships first, then nodes, flowers, chunks, session
+    # Delete in order: relationships first, then references (linked via the
+    # session's nodes / carrying session_id), nodes, flowers, chunks,
+    # session-scoped side-cars, orphaned sources, and finally the session.
     queries = [
         # Delete relationships for session
         """
         MATCH ()-[r:RELATIONSHIP {session_id: $session_id}]->()
         DELETE r
+        """,
+        # Delete Reference nodes for session (carry session_id; DETACH also
+        # removes HAS_REFERENCE / CITED_BY edges)
+        """
+        MATCH (ref:Reference {session_id: $session_id})
+        DETACH DELETE ref
         """,
         # Delete nodes for session
         """
@@ -689,17 +705,40 @@ async def delete_session_record(session_id: str) -> None:
         # Delete flowers for session
         """
         MATCH (f:Flower {session_id: $session_id})
-        DELETE f
+        DETACH DELETE f
         """,
         # Delete chunks for session
         """
         MATCH (c:TranscriptChunk {session_id: $session_id})
-        DELETE c
+        DETACH DELETE c
+        """,
+        # Delete session vocabulary
+        """
+        MATCH (v:SessionVocabulary {session_id: $session_id})
+        DETACH DELETE v
+        """,
+        # Delete proofread checkpoint
+        """
+        MATCH (p:ProofreadCheckpoint {session_id: $session_id})
+        DETACH DELETE p
+        """,
+        # Delete session context
+        """
+        MATCH (sc:SessionContext {session_id: $session_id})
+        DETACH DELETE sc
+        """,
+        # Delete Source nodes that no longer have any citations. Sources are
+        # MERGEd globally by url (shared across sessions), so only remove the
+        # ones this delete orphaned.
+        """
+        MATCH (src:Source)
+        WHERE NOT (src)<-[:CITED_BY]-()
+        DETACH DELETE src
         """,
         # Delete session itself
         """
         MATCH (s:Session {id: $session_id})
-        DELETE s
+        DETACH DELETE s
         """,
     ]
 

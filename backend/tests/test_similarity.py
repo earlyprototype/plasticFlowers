@@ -86,7 +86,28 @@ async def test_query_best_match_hits_vector_index(monkeypatch):
     assert candidate is not None
     assert candidate.node_id == "node-1"
     assert candidate.score == pytest.approx(0.88)
-    assert driver.calls[0]["params"]["index_name"] == NODE_EMBEDDING_INDEX
+    params = driver.calls[0]["params"]
+    assert params["index_name"] == NODE_EMBEDDING_INDEX
+    # The vector index is global and filtered by session AFTER the top-k cut,
+    # so the query must overfetch (>= 50) — otherwise other sessions' nodes
+    # crowd out this session's true matches.
+    assert params["top_k"] >= 50, "vector query must overfetch before session filter"
+    assert params["session_id"] == "session-1"
+
+
+@pytest.mark.asyncio
+async def test_query_best_match_respects_larger_top_k(monkeypatch):
+    """A caller-requested top_k above the overfetch floor is passed through."""
+    driver = FakeNeo4jDriver([[{"node_id": "node-1", "score": 0.9}]])
+
+    async def fake_get_driver():
+        return driver
+
+    monkeypatch.setattr(similarity, "get_driver", fake_get_driver)
+
+    await similarity._query_best_match("session-1", [0.1, 0.2], top_k=200)
+
+    assert driver.calls[0]["params"]["top_k"] == 200
 
 
 @pytest.mark.asyncio

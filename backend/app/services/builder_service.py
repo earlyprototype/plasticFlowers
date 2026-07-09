@@ -424,17 +424,30 @@ class BuilderService:
         session_id: str,
         relationships: List[Relationship],
     ) -> List[Relationship]:
-        """Persist relationships to Neo4j."""
+        """Persist relationships to Neo4j.
+
+        create_relationship returns None when an endpoint node is missing;
+        skip those (with a log) instead of appending None — a None payload
+        would crash the RelationshipAddedEvent broadcast and fail the whole
+        chunk after nodes were already persisted.
+        """
         persisted: List[Relationship] = []
         for rel in relationships:
             try:
-                persisted.append(await create_relationship(session_id, rel))
+                created = await create_relationship(session_id, rel)
             except RuntimeError as e:
                 logger.error(
                     "builder.relationship_failed id=%s source=%s target=%s error=%s",
                     rel.id, rel.source_id, rel.target_id, e,
                 )
                 raise
+            if created is None:
+                logger.warning(
+                    "builder.relationship_skipped_missing_nodes id=%s source=%s target=%s",
+                    rel.id, rel.source_id, rel.target_id,
+                )
+                continue
+            persisted.append(created)
         return persisted
 
     async def _broadcast_nodes(self, session_id: str, nodes: List[Node]) -> None:

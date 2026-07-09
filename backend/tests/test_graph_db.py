@@ -60,10 +60,20 @@ async def test_list_nodes_applies_filters(monkeypatch):
     assert nodes[0].label == node.label
     assert nodes[0].flower_id == "flower-1"
     recorded = driver.calls[-1]
-    assert "n.status = $status" in recorded["query"]
-    assert "BELONGS_TO" in recorded["query"]
+    query = recorded["query"]
+    assert "n.status = $status" in query
+    assert "BELONGS_TO" in query
     assert recorded["params"]["status"] == NodeStatus.GHOST.value
     assert recorded["params"]["flower_id"] == "flower-1"
+    # The generated Cypher must be valid: the status filter needs a WHERE
+    # clause, and any AND must come after it (a bare AND after MATCH is a
+    # Cypher syntax error — the fake driver never parses queries, so assert
+    # on the captured query string).
+    assert "WHERE" in query, "status filter requires a WHERE clause"
+    before_where = query.split("WHERE", 1)[0]
+    assert " AND " not in before_where, "AND with no preceding WHERE is invalid Cypher"
+    if " AND " in query:
+        assert query.index("WHERE") < query.index(" AND ")
 
 
 @pytest.mark.asyncio
@@ -134,6 +144,43 @@ async def test_set_node_flower_creates_relationship(monkeypatch):
     assert recorded["params"]["node_id"] == "node-1"
     assert recorded["params"]["flower_id"] == "flower-1"
     assert recorded["params"]["session_id"] == "session-1"
+
+
+@pytest.mark.asyncio
+async def test_delete_session_record_covers_all_session_data(monkeypatch):
+    """delete_session_record must clean up the session-scoped side-car nodes
+    (Reference, SessionVocabulary, ProofreadCheckpoint, SessionContext) and
+    orphaned Source nodes — these were previously left behind."""
+    driver = FakeNeo4jDriver([[] for _ in range(20)])
+
+    async def fake_get_driver():
+        return driver
+
+    monkeypatch.setattr(graph_db, "get_driver", fake_get_driver)
+
+    await graph_db.delete_session_record("session-1")
+
+    all_queries = " || ".join(call["query"] for call in driver.calls)
+
+    # Original coverage
+    assert "RELATIONSHIP {session_id: $session_id}" in all_queries
+    assert "(n:Node {session_id: $session_id})" in all_queries
+    assert "Flower {session_id: $session_id}" in all_queries
+    assert "TranscriptChunk {session_id: $session_id}" in all_queries
+    assert "Session {id: $session_id}" in all_queries
+
+    # Previously-orphaned labels now covered
+    assert "Reference {session_id: $session_id}" in all_queries
+    assert "SessionVocabulary {session_id: $session_id}" in all_queries
+    assert "ProofreadCheckpoint {session_id: $session_id}" in all_queries
+    assert "SessionContext {session_id: $session_id}" in all_queries
+    # Sources are global (MERGEd by url): only delete ones with no citations left
+    assert "MATCH (src:Source)" in all_queries
+    assert "NOT (src)<-[:CITED_BY]-()" in all_queries
+
+    # Every query ran with the session id bound
+    for call in driver.calls:
+        assert call["params"] == {"session_id": "session-1"}
 
 
 @pytest.mark.asyncio

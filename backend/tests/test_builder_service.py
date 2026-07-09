@@ -7,7 +7,15 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from app.models import Node, NodeStatus, TranscriptChunk
+from app.models import (
+    Node,
+    NodeStatus,
+    Relationship,
+    RelationshipAddedEvent,
+    RelationshipCategory,
+    RelationshipSource,
+    TranscriptChunk,
+)
 from app.services.builder_service import BuilderService
 from app.agents import BuilderAgentResult, UnresolvedRelationship
 
@@ -298,3 +306,53 @@ async def test_similarity_check_enabled_performs_deduplication(monkeypatch):
     # The mock_sse.broadcast would have been called with NodeUpdatedEvent
     assert mock_sse.broadcast.called
 
+
+def _make_rel(rel_id: str, source_id: str, target_id: str) -> Relationship:
+    return Relationship(
+        id=rel_id,
+        source_id=source_id,
+        target_id=target_id,
+        category=RelationshipCategory.ASSOCIATIVE,
+        description="related to",
+        confidence=0.8,
+        evidence="test evidence",
+        source=RelationshipSource.BUILDER,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+@pytest.mark.asyncio
+async def test_persist_relationships_skips_none_from_missing_nodes(monkeypatch):
+    """create_relationship returns None when an endpoint node is missing;
+    the None must be skipped (T7) — previously it was appended and later
+    crashed RelationshipAddedEvent(payload=None), failing the whole chunk."""
+    from app.services import builder_service
+
+    rel_ok = _make_rel("rel-ok", "node-a", "node-b")
+    rel_missing = _make_rel("rel-missing", "node-a", "node-ghosted")
+
+    async def fake_create_relationship(session_id: str, rel: Relationship):
+        if rel.id == "rel-missing":
+            return None  # endpoint node missing
+        return rel
+
+    monkeypatch.setattr(builder_service, "create_relationship", fake_create_relationship)
+
+    service = BuilderService()
+    persisted = await service._persist_relationships("session-1", [rel_ok, rel_missing])
+
+    assert persisted == [rel_ok], "None results must be skipped, not appended"
+
+    # And broadcasting the persisted list must not construct a None payload.
+    broadcasts = []
+
+    class FakeSSE:
+        async def broadcast(self, session_id: str, event):
+            broadcasts.append(event)
+
+    monkeypatch.setattr(builder_service, "sse_manager", FakeSSE())
+    await service._broadcast_relationships("session-1", persisted)
+
+    assert len(broadcasts) == 1
+    assert isinstance(broadcasts[0], RelationshipAddedEvent)
+    assert broadcasts[0].payload.id == "rel-ok"

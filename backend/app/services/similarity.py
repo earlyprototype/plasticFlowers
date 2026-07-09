@@ -62,10 +62,20 @@ class _MatchCandidate:
     score: float
 
 
+# The vector index is global: queryNodes takes the top-k across ALL sessions
+# and only then do we filter by session_id. Overfetch so other sessions'
+# nodes cannot crowd this session's true matches out of the candidate set.
+_VECTOR_OVERFETCH_K = 50
+
+
 async def _query_best_match(
     session_id: str, embedding: List[float], top_k: int
 ) -> Optional[_MatchCandidate]:
-    """Return the highest-scoring node id for the provided embedding."""
+    """Return the highest-scoring node id for the provided embedding.
+
+    ``top_k`` is the caller-requested candidate count; internally we overfetch
+    (at least _VECTOR_OVERFETCH_K) before the session filter is applied.
+    """
 
     driver = await get_driver()
     query = """
@@ -78,7 +88,7 @@ async def _query_best_match(
     """
     params = {
         "index_name": NODE_EMBEDDING_INDEX,
-        "top_k": top_k,
+        "top_k": max(top_k, _VECTOR_OVERFETCH_K),
         "embedding": embedding,
         "session_id": session_id,
     }
