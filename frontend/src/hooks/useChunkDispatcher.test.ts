@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createChunkBuffer, startStaleFlushTimer } from "./useChunkDispatcher";
+import { createChunkBuffer } from "./useChunkDispatcher";
 
 describe("createChunkBuffer", () => {
   it("does not reach the dispatch gate on short unpunctuated text", () => {
@@ -59,7 +59,7 @@ describe("createChunkBuffer", () => {
   });
 });
 
-describe("startStaleFlushTimer", () => {
+describe("stale-flush deadline (onDeadline)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });
@@ -68,41 +68,88 @@ describe("startStaleFlushTimer", () => {
     vi.useRealTimers();
   });
 
-  it("flushes a stale non-empty buffer without requiring another append", () => {
-    let seconds = 0;
-    const buffer = createChunkBuffer({ clock: () => seconds, maxDelayMs: 15000 });
-    const flush = vi.fn(() => {
-      buffer.takeChunk();
+  it("flushes buffered text exactly maxDelayMs after the first append", () => {
+    const buffer = createChunkBuffer({
+      clock: () => 0,
+      maxDelayMs: 15000,
+      onDeadline: () => {
+        buffer.takeChunk();
+      },
     });
-    const stop = startStaleFlushTimer(buffer, flush, 1000);
+    const spy = vi.spyOn(buffer, "takeChunk");
 
     buffer.append("tail text that never gets punctuation");
 
-    // Not yet stale: ticks occur but nothing flushes
-    seconds = 10;
-    vi.advanceTimersByTime(10000);
-    expect(flush).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(14999);
+    expect(spy).not.toHaveBeenCalled();
 
-    // Past maxDelayMs: the next tick flushes exactly once (buffer drained)
-    seconds = 16;
-    vi.advanceTimersByTime(2000);
-    expect(flush).toHaveBeenCalledTimes(1);
+    vi.advanceTimersByTime(1);
+    expect(spy).toHaveBeenCalledTimes(1);
     expect(buffer.pendingText).toBe("");
-
-    stop();
   });
 
-  it("stops checking after the returned stop function runs (unmount cleanup)", () => {
-    let seconds = 0;
-    const buffer = createChunkBuffer({ clock: () => seconds, maxDelayMs: 15000 });
-    const flush = vi.fn();
-    const stop = startStaleFlushTimer(buffer, flush, 1000);
+  it("does not arm while the buffer stays empty (no timer churn at idle)", () => {
+    const onDeadline = vi.fn();
+    const buffer = createChunkBuffer({ clock: () => 0, maxDelayMs: 15000, onDeadline });
+
+    buffer.append("   "); // whitespace-only appends never enter the buffer
+    vi.advanceTimersByTime(60000);
+    expect(onDeadline).not.toHaveBeenCalled();
+  });
+
+  it("keeps the deadline anchored to the empty -> non-empty transition across appends", () => {
+    const onDeadline = vi.fn();
+    const buffer = createChunkBuffer({ clock: () => 0, maxDelayMs: 15000, onDeadline });
+
+    buffer.append("first fragment");
+    vi.advanceTimersByTime(10000);
+    buffer.append("second fragment"); // must not push the deadline back
+    vi.advanceTimersByTime(5000);
+    expect(onDeadline).toHaveBeenCalledTimes(1);
+  });
+
+  it("is cleared when takeChunk drains the buffer before the deadline", () => {
+    const onDeadline = vi.fn();
+    const buffer = createChunkBuffer({ clock: () => 0, maxDelayMs: 15000, onDeadline });
+
+    buffer.append("dispatched before going stale");
+    buffer.takeChunk();
+
+    vi.advanceTimersByTime(60000);
+    expect(onDeadline).not.toHaveBeenCalled();
+  });
+
+  it("is cleared by reset", () => {
+    const onDeadline = vi.fn();
+    const buffer = createChunkBuffer({ clock: () => 0, maxDelayMs: 15000, onDeadline });
 
     buffer.append("text");
-    stop();
+    buffer.reset();
 
-    seconds = 1000;
     vi.advanceTimersByTime(60000);
-    expect(flush).not.toHaveBeenCalled();
+    expect(onDeadline).not.toHaveBeenCalled();
+  });
+
+  it("is cleared by dispose (unmount cleanup)", () => {
+    const onDeadline = vi.fn();
+    const buffer = createChunkBuffer({ clock: () => 0, maxDelayMs: 15000, onDeadline });
+
+    buffer.append("text");
+    buffer.dispose();
+
+    vi.advanceTimersByTime(60000);
+    expect(onDeadline).not.toHaveBeenCalled();
+  });
+
+  it("re-arms on the next append after the buffer empties", () => {
+    const onDeadline = vi.fn();
+    const buffer = createChunkBuffer({ clock: () => 0, maxDelayMs: 15000, onDeadline });
+
+    buffer.append("first chunk");
+    buffer.takeChunk();
+
+    buffer.append("second chunk");
+    vi.advanceTimersByTime(15000);
+    expect(onDeadline).toHaveBeenCalledTimes(1);
   });
 });

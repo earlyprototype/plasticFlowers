@@ -40,6 +40,10 @@ describe("EVENT_TYPES", () => {
   it("subscribes to node_corrected", () => {
     expect(EVENT_TYPES).toContain("node_corrected");
   });
+
+  it("subscribes to resync_required so queue-overflow notices reach the graph handler", () => {
+    expect(EVENT_TYPES).toContain("resync_required");
+  });
 });
 
 class FakeEventSource {

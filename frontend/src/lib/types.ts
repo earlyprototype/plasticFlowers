@@ -169,6 +169,12 @@ export interface GardenerCyclePayload {
   timestamp: string;
 }
 
+// Emitted when the server's bounded per-client event queue overflowed and
+// dropped events — the client's graph state is incomplete and must refetch.
+export interface ResyncRequiredPayload {
+  reason: string; // e.g. "event_overflow"
+}
+
 export type NodeAddedEvent = {
   type: "node_added";
   payload: Node;
@@ -234,6 +240,11 @@ export type HeartbeatEvent = {
   payload: string;
 };
 
+export type ResyncRequiredEvent = {
+  type: "resync_required";
+  payload: ResyncRequiredPayload;
+};
+
 export type SSEvent =
   | NodeAddedEvent
   | NodeUpdatedEvent
@@ -248,7 +259,8 @@ export type SSEvent =
   | ChunkProcessedEvent
   | GardenerCycleEvent
   | HeartbeatEvent
-  | ReferenceAddedEvent;
+  | ReferenceAddedEvent
+  | ResyncRequiredEvent;
 
 export interface ReferenceSource {
   title: string;

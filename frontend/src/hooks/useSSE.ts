@@ -31,6 +31,7 @@ export const EVENT_TYPES: ReadonlyArray<SSEvent["type"]> = [
   "gardener_cycle",
   "heartbeat",
   "reference_added",
+  "resync_required",
 ];
 
 const WATCHDOG_TIMEOUT_MS = 45000;
@@ -211,8 +212,9 @@ export function useSSE({ sessionId, onEvent, onReconnect }: UseSSEOptions) {
     try {
       const payload = data ? (JSON.parse(data) as SSEvent["payload"]) : undefined;
       if (payload == null) {
-        // Skip events with empty/undefined payloads instead of letting
-        // downstream handlers crash on e.g. `event.payload.id`.
+        // Single runtime guard at the SSE boundary: events with empty/undefined
+        // payloads never reach consumers, so downstream handlers can rely on
+        // `event.payload` being present (no per-consumer re-checks).
         if (!warnedEmptyPayloadRef.current) {
           warnedEmptyPayloadRef.current = true;
           console.warn(`SSE event "${type}" arrived with an empty payload; skipping`);

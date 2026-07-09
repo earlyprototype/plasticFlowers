@@ -29,8 +29,10 @@ export const createEmptyMaps = (): GraphMaps => ({
 
 /**
  * Pure reducer applying a single SSE event to the graph maps.
- * Returns `prev` unchanged when the event does not affect the maps
- * (including events with a missing payload — defensive against empty SSE data).
+ * Returns `prev` unchanged when the event does not affect the maps.
+ * The missing-payload check is a silent no-op kept for direct (non-SSE)
+ * callers and the pure-reducer tests; at runtime useSSE already filters
+ * events with empty payloads before they reach consumers.
  */
 export function applyEventToMaps(prev: GraphMaps, event: SSEvent): GraphMaps {
   if ((event as { payload?: unknown }).payload == null) {
@@ -92,11 +94,39 @@ export function applyEventToMaps(prev: GraphMaps, event: SSEvent): GraphMaps {
   }
 }
 
+const RESYNC_DEBOUNCE_MS = 500;
+
+/**
+ * Coalesces a burst of resync requests into a single refetch: the first
+ * `request()` arms a timer that invokes `refetch` after `delayMs`; further
+ * requests while the timer is armed are ignored. `cancel()` drops a pending
+ * refetch (unmount cleanup).
+ */
+export function createResyncScheduler(refetch: () => void, delayMs: number = RESYNC_DEBOUNCE_MS) {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return {
+    request(): void {
+      if (timer !== null) return;
+      timer = setTimeout(() => {
+        timer = null;
+        refetch();
+      }, delayMs);
+    },
+    cancel(): void {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
+}
+
+export type ResyncScheduler = ReturnType<typeof createResyncScheduler>;
+
 export function useGraphState(sessionId: string | null | undefined) {
   const [maps, setMaps] = useState<GraphMaps>(() => createEmptyMaps());
   const [graphError, setGraphError] = useState<string | null>(null);
   const [lastChunkError, setLastChunkError] = useState<string | null>(null);
-  const warnedEmptyPayloadRef = useRef(false);
 
   // Activity counters
   const [builderCount, setBuilderCount] = useState(0);
@@ -133,6 +163,22 @@ export function useGraphState(sessionId: string | null | undefined) {
     }
   }, [sessionId]);
 
+  // The resync scheduler is created once, so it reaches the latest
+  // refreshGraph (which changes with sessionId) through a ref.
+  const refreshGraphRef = useRef(refreshGraph);
+  useEffect(() => {
+    refreshGraphRef.current = refreshGraph;
+  }, [refreshGraph]);
+
+  const resyncSchedulerRef = useRef<ResyncScheduler | null>(null);
+  if (resyncSchedulerRef.current === null) {
+    resyncSchedulerRef.current = createResyncScheduler(() => void refreshGraphRef.current());
+  }
+  useEffect(() => {
+    const scheduler = resyncSchedulerRef.current;
+    return () => scheduler?.cancel();
+  }, []);
+
   useEffect(() => {
     if (!sessionId) {
       setMaps(createEmptyMaps());
@@ -147,13 +193,12 @@ export function useGraphState(sessionId: string | null | undefined) {
 
   const handleEvent = useCallback((event: SSEvent) => {
     debugLog("[SSE] Received:", event.type, event.payload);
-    // Defensive guard: skip malformed events with no payload rather than
-    // crashing on e.g. `event.payload.id` (useSSE also filters these).
-    if ((event as { payload?: unknown }).payload == null) {
-      if (!warnedEmptyPayloadRef.current) {
-        warnedEmptyPayloadRef.current = true;
-        console.warn(`Ignoring SSE event "${event.type}" with missing payload`);
-      }
+
+    if (event.type === "resync_required") {
+      // The server's bounded per-client queue overflowed and dropped events,
+      // so local graph state is incomplete. Schedule a debounced full refetch
+      // (a burst of resync events causes one refetch).
+      resyncSchedulerRef.current?.request();
       return;
     }
 

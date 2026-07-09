@@ -9,25 +9,30 @@ export type UseChunkDispatcherOptions = {
   sessionId?: string | null;
   minSentences?: number;
   maxDelayMs?: number;
-  /** How often the stale-buffer timer checks whether buffered text should flush. */
-  staleCheckIntervalMs?: number;
   /** Injectable clock returning seconds (used for chunk start/end timestamps and staleness). */
   clock?: () => number;
 };
 
 const DEFAULT_MIN_SENTENCES = 3;
 const DEFAULT_MAX_DELAY_MS = 15000;
-const DEFAULT_STALE_CHECK_INTERVAL_MS = 1000;
 const MAX_BUFFER_CHARS = 1000;
 
 export type ChunkBufferOptions = {
   minSentences?: number;
   maxDelayMs?: number;
   maxBufferChars?: number;
-  /** Seconds clock for chunk start/end timestamps (test injection point). */
+  /**
+   * Injectable clock returning seconds — the single time source for chunk
+   * start/end timestamps and staleness (milliseconds derived internally).
+   */
   clock?: () => number;
-  /** Milliseconds clock for staleness checks; derived from `clock` when provided. */
-  nowMs?: () => number;
+  /**
+   * Stale-flush deadline: invoked once, `maxDelayMs` after the buffer
+   * transitions empty -> non-empty. Cleared by `takeChunk()`/`reset()`/
+   * `dispose()`; re-armed on the next append into an empty buffer. Without it,
+   * a session's final unpunctuated utterance could sit in the buffer forever.
+   */
+  onDeadline?: () => void;
 };
 
 /**
@@ -44,19 +49,39 @@ export function createChunkBuffer(options: ChunkBufferOptions = {}) {
     maxDelayMs = DEFAULT_MAX_DELAY_MS,
     maxBufferChars = MAX_BUFFER_CHARS,
     clock,
-    nowMs = clock ? () => clock() * 1000 : () => performance.now(),
+    onDeadline,
   } = options;
+
+  const nowMs = clock ? () => clock() * 1000 : () => performance.now();
 
   let parts: string[] = [];
   let sentences = 0;
   let startTimestamp = getTimestamp(clock);
   let bufferStartedAtMs: number | null = null;
+  let deadlineTimer: ReturnType<typeof setTimeout> | null = null;
+
+  const clearDeadline = () => {
+    if (deadlineTimer !== null) {
+      clearTimeout(deadlineTimer);
+      deadlineTimer = null;
+    }
+  };
+
+  const armDeadline = () => {
+    if (!onDeadline) return;
+    clearDeadline();
+    deadlineTimer = setTimeout(() => {
+      deadlineTimer = null;
+      onDeadline();
+    }, maxDelayMs);
+  };
 
   const reset = () => {
     parts = [];
     sentences = 0;
     startTimestamp = getTimestamp(clock);
     bufferStartedAtMs = null;
+    clearDeadline();
   };
 
   return {
@@ -66,6 +91,7 @@ export function createChunkBuffer(options: ChunkBufferOptions = {}) {
       if (parts.length === 0) {
         startTimestamp = getTimestamp(clock);
         bufferStartedAtMs = nowMs();
+        armDeadline();
       }
       parts.push(trimmed);
       sentences += countSentences(trimmed);
@@ -95,6 +121,10 @@ export function createChunkBuffer(options: ChunkBufferOptions = {}) {
       return payload;
     },
     reset,
+    /** Clear a pending stale-flush deadline without touching the buffer (unmount cleanup). */
+    dispose(): void {
+      clearDeadline();
+    },
     get pendingText(): string {
       return parts.join(" ");
     },
@@ -106,38 +136,29 @@ export function createChunkBuffer(options: ChunkBufferOptions = {}) {
 
 export type ChunkBuffer = ReturnType<typeof createChunkBuffer>;
 
-/**
- * Interval timer that flushes a stale non-empty buffer.
- * Returns a stop function that clears the interval (call on unmount).
- */
-export function startStaleFlushTimer(
-  buffer: Pick<ChunkBuffer, "isStale">,
-  flush: () => void,
-  intervalMs: number,
-): () => void {
-  const intervalId = setInterval(() => {
-    if (buffer.isStale()) {
-      flush();
-    }
-  }, intervalMs);
-  return () => clearInterval(intervalId);
-}
-
 export function useChunkDispatcher(options: UseChunkDispatcherOptions = {}) {
   const {
     sessionId,
     minSentences = DEFAULT_MIN_SENTENCES,
     maxDelayMs = DEFAULT_MAX_DELAY_MS,
-    staleCheckIntervalMs = DEFAULT_STALE_CHECK_INTERVAL_MS,
     clock,
   } = options;
   const [isDispatching, setIsDispatching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // The buffer's stale-flush deadline calls the latest dispatch function via a ref
+  // (the buffer is created once, before dispatchChunk exists).
+  const deadlineFlushRef = useRef<() => void>(() => {});
+
   // Lazily create the buffer once; thresholds/clock are fixed for the hook's lifetime.
   const bufferRef = useRef<ChunkBuffer | null>(null);
   if (bufferRef.current === null) {
-    bufferRef.current = createChunkBuffer({ minSentences, maxDelayMs, clock });
+    bufferRef.current = createChunkBuffer({
+      minSentences,
+      maxDelayMs,
+      clock,
+      onDeadline: () => deadlineFlushRef.current(),
+    });
   }
   const buffer = bufferRef.current;
 
@@ -165,6 +186,13 @@ export function useChunkDispatcher(options: UseChunkDispatcherOptions = {}) {
     }
   }, [buffer]);
 
+  useEffect(() => {
+    deadlineFlushRef.current = () => void dispatchChunk();
+  }, [dispatchChunk]);
+
+  // Clear any pending stale-flush deadline when the component unmounts.
+  useEffect(() => () => buffer.dispose(), [buffer]);
+
   const append = useCallback(
     async (text: string, isFinal: boolean) => {
       if (!text.trim()) return;
@@ -175,14 +203,6 @@ export function useChunkDispatcher(options: UseChunkDispatcherOptions = {}) {
     },
     [buffer, dispatchChunk],
   );
-
-  // Real timer flushing stale buffers — without it, the session's final
-  // utterance could sit in the buffer forever (staleness was previously only
-  // evaluated on the next append).
-  useEffect(() => {
-    if (!sessionId) return;
-    return startStaleFlushTimer(buffer, () => void dispatchChunk(), staleCheckIntervalMs);
-  }, [sessionId, buffer, dispatchChunk, staleCheckIntervalMs]);
 
   const resetBuffer = useCallback(() => {
     buffer.reset();
