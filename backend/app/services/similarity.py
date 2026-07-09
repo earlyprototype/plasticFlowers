@@ -27,9 +27,18 @@ class _MatchCandidate:
 
 
 # The vector index is global: queryNodes takes the top-k across ALL sessions
-# and only then do we filter by session_id. Overfetch so other sessions'
-# nodes cannot crowd this session's true matches out of the candidate set.
+# and only then do we filter by session_id. The wide second pass uses this k
+# so other sessions' nodes cannot crowd this session's true matches out of
+# the candidate set when the narrow first pass comes back short.
 _VECTOR_OVERFETCH_K = 50
+
+_VECTOR_QUERY = """
+    CALL db.index.vector.queryNodes($index_name, $top_k, $embedding)
+    YIELD node, score
+    WHERE node.session_id = $session_id
+    RETURN node.id AS node_id, score
+    ORDER BY score DESC
+    """
 
 
 async def _query_best_match(
@@ -37,35 +46,44 @@ async def _query_best_match(
 ) -> Optional[_MatchCandidate]:
     """Return the highest-scoring node id for the provided embedding.
 
-    ``top_k`` is the caller-requested candidate count; internally we overfetch
-    (at least _VECTOR_OVERFETCH_K) before the session filter is applied.
+    Two-pass strategy keeps the hot path cheap: first query with the
+    caller-requested ``top_k``; only when the session-filtered results are
+    insufficient (fewer than ``top_k`` rows survive the filter, i.e. other
+    sessions' nodes occupied part of the window) requery with the wide
+    ``_VECTOR_OVERFETCH_K``.
     """
 
     driver = await get_driver()
-    query = """
-    CALL db.index.vector.queryNodes($index_name, $top_k, $embedding)
-    YIELD node, score
-    WHERE node.session_id = $session_id
-    RETURN node.id AS node_id, score
-    ORDER BY score DESC
-    LIMIT 1
-    """
-    params = {
-        "index_name": NODE_EMBEDDING_INDEX,
-        "top_k": max(top_k, _VECTOR_OVERFETCH_K),
-        "embedding": embedding,
-        "session_id": session_id,
-    }
 
-    async with driver.session() as session:
-        async def _work(tx, cypher: str, arguments: dict) -> Optional[_MatchCandidate]:
-            result = await tx.run(cypher, **arguments)
-            record = await result.single()
-            if record is None:
-                return None
-            return _MatchCandidate(node_id=record["node_id"], score=float(record["score"]))
+    async def _run_query(k: int) -> List[_MatchCandidate]:
+        params = {
+            "index_name": NODE_EMBEDDING_INDEX,
+            "top_k": k,
+            "embedding": embedding,
+            "session_id": session_id,
+        }
 
-        return await session.execute_read(_work, query, params)
+        async with driver.session() as session:
+            async def _work(tx, cypher: str, arguments: dict) -> List[_MatchCandidate]:
+                result = await tx.run(cypher, **arguments)
+                candidates: List[_MatchCandidate] = []
+                async for record in result:
+                    candidates.append(
+                        _MatchCandidate(
+                            node_id=record["node_id"], score=float(record["score"])
+                        )
+                    )
+                return candidates
+
+            return await session.execute_read(_work, _VECTOR_QUERY, params)
+
+    candidates = await _run_query(top_k)
+    if len(candidates) < top_k and top_k < _VECTOR_OVERFETCH_K:
+        # Session results were (possibly) crowded out of the narrow window —
+        # requery with the wide k before concluding there is no match.
+        candidates = await _run_query(_VECTOR_OVERFETCH_K)
+
+    return candidates[0] if candidates else None
 
 
 # Type embedding cache with LRU eviction (ADR-013)

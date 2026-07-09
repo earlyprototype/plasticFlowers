@@ -413,14 +413,40 @@ async def list_relationships(
 
 
 async def upsert_flower(session_id: str, flower: Flower) -> Flower:
-    """Create or update a Flower node."""
+    """Create or update a Flower node, reconciling membership atomically.
+
+    ``flower.member_ids`` is the authoritative member list: in ONE transaction
+    the Flower is MERGEd, BELONGS_TO edges of nodes no longer in the list are
+    detached, edges for listed nodes are attached (session-scoped, replacing
+    any membership in another Flower), and the Flower is returned with its
+    member_ids re-derived from the reconciled edges. Readers never observe a
+    partially-updated membership.
+    """
 
     driver = await get_driver()
     flower_props = _flower_to_properties(flower, session_id)
-    query = """
+    member_ids = [mid for mid in (flower.member_ids or []) if mid]
+
+    upsert_query = """
     MERGE (f:Flower {id: $flower_id, session_id: $session_id})
     SET f = $flower
-    WITH f
+    """
+    detach_query = """
+    MATCH (old:Node)-[stale:BELONGS_TO]->(f:Flower {id: $flower_id, session_id: $session_id})
+    WHERE NOT old.id IN $member_ids
+    DELETE stale
+    """
+    attach_query = """
+    MATCH (f:Flower {id: $flower_id, session_id: $session_id})
+    UNWIND $member_ids AS member_id
+    MATCH (n:Node {id: member_id, session_id: $session_id})
+    OPTIONAL MATCH (n)-[previous:BELONGS_TO]->(other:Flower)
+    WHERE other.id <> $flower_id
+    DELETE previous
+    MERGE (n)-[:BELONGS_TO]->(f)
+    """
+    return_query = """
+    MATCH (f:Flower {id: $flower_id, session_id: $session_id})
     OPTIONAL MATCH (n:Node)-[:BELONGS_TO]->(f)
     RETURN f AS flower, collect(n.id) AS member_ids
     """
@@ -428,17 +454,22 @@ async def upsert_flower(session_id: str, flower: Flower) -> Flower:
         "flower_id": flower.id,
         "session_id": session_id,
         "flower": flower_props,
+        "member_ids": member_ids,
     }
 
     async with driver.session() as session:
-        async def _work(tx, cypher: str, parameters: Dict[str, Any]) -> Flower:
-            result = await tx.run(cypher, **parameters)
+        async def _work(tx, parameters: Dict[str, Any]) -> Flower:
+            await (await tx.run(upsert_query, **parameters)).consume()
+            await (await tx.run(detach_query, **parameters)).consume()
+            if parameters["member_ids"]:
+                await (await tx.run(attach_query, **parameters)).consume()
+            result = await tx.run(return_query, **parameters)
             record = await result.single()
             if record is None:
                 raise RuntimeError("Neo4j did not return upserted Flower")
             return _flower_from_value(record["flower"], member_ids=record.get("member_ids"))
 
-        return await session.execute_write(_work, query, params)
+        return await session.execute_write(_work, params)
 
 
 async def delete_flower(session_id: str, flower_id: str) -> None:
@@ -682,6 +713,14 @@ async def delete_session_record(session_id: str) -> None:
 
     driver = await get_driver()
 
+    # Collected before the session's References are deleted: only Sources this
+    # session actually cited can become orphaned by this delete, so the orphan
+    # sweep below is scoped to this url set instead of scanning every Source.
+    collect_cited_urls_query = """
+    MATCH (ref:Reference {session_id: $session_id})-[:CITED_BY]->(src:Source)
+    RETURN collect(DISTINCT src.url) AS urls
+    """
+
     # Delete in order: relationships first, then references (linked via the
     # session's nodes / carrying session_id), nodes, flowers, chunks,
     # session-scoped side-cars, orphaned sources, and finally the session.
@@ -727,12 +766,14 @@ async def delete_session_record(session_id: str) -> None:
         MATCH (sc:SessionContext {session_id: $session_id})
         DETACH DELETE sc
         """,
-        # Delete Source nodes that no longer have any citations. Sources are
-        # MERGEd globally by url (shared across sessions), so only remove the
-        # ones this delete orphaned.
+        # Delete Source nodes this session cited that no longer have any
+        # citations. Sources are MERGEd globally by url (shared across
+        # sessions), so the check is anchored to the urls collected above
+        # instead of scanning the whole Source label.
         """
         MATCH (src:Source)
-        WHERE NOT (src)<-[:CITED_BY]-()
+        WHERE src.url IN $cited_urls
+          AND NOT (src)<-[:CITED_BY]-()
         DETACH DELETE src
         """,
         # Delete session itself
@@ -744,7 +785,17 @@ async def delete_session_record(session_id: str) -> None:
 
     async with driver.session() as session:
         async def _work(tx, cypher_list: List[str], parameters: Dict[str, Any]) -> None:
+            # Snapshot the session's cited Source urls first (the References
+            # are gone by the time the orphan sweep runs).
+            result = await tx.run(collect_cited_urls_query, **parameters)
+            record = await result.single()
+            cited_urls = list(record["urls"]) if record and record["urls"] else []
+
+            parameters = {**parameters, "cited_urls": cited_urls}
             for cypher in cypher_list:
+                if "$cited_urls" in cypher and not cited_urls:
+                    # Nothing cited -> nothing can be orphaned; skip the sweep.
+                    continue
                 result = await tx.run(cypher, **parameters)
                 await result.consume()
 

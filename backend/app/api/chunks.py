@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
+from collections import defaultdict
 from uuid import uuid4
 
 from fastapi import APIRouter, HTTPException, Path, status
@@ -29,8 +31,37 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/sessions/{session_id}/chunks", tags=["chunks"])
 
-# Track active background tasks to prevent garbage collection
-_active_tasks: set[asyncio.Task[None]] = set()
+# Track active background tasks per session: prevents garbage collection and
+# lets end_session drain in-flight Builder work before its flush check.
+_active_tasks: dict[str, set[asyncio.Task[None]]] = defaultdict(set)
+
+
+def _drain_timeout_seconds() -> float:
+    """Default drain timeout: the Builder task timeout plus a small margin."""
+    return float(os.getenv("BUILDER_TASK_TIMEOUT", "90")) + 5.0
+
+
+async def drain_session_tasks(session_id: str, timeout: float | None = None) -> bool:
+    """Wait for the session's in-flight Builder tasks to complete.
+
+    Returns True when every task finished inside the timeout, False if some
+    were still running (callers proceed either way — this is a best-effort
+    barrier so session-end checks don't race in-flight chunks).
+    """
+    if timeout is None:
+        timeout = _drain_timeout_seconds()
+
+    tasks = {task for task in _active_tasks.get(session_id, ()) if not task.done()}
+    if not tasks:
+        return True
+
+    done, pending = await asyncio.wait(tasks, timeout=timeout)
+    if pending:
+        logger.warning(
+            "chunks.drain_timeout session=%s still_running=%d timeout=%.1fs",
+            session_id, len(pending), timeout,
+        )
+    return not pending
 
 
 @router.post(
@@ -96,8 +127,17 @@ def _queue_processing(session_id: str, chunk: TranscriptChunk) -> None:
         _process_chunk(session_id, chunk),
         name=f"builder-{chunk.id}",
     )
-    _active_tasks.add(task)
-    task.add_done_callback(lambda t: _active_tasks.discard(t))
+    _active_tasks[session_id].add(task)
+
+    def _discard(t: asyncio.Task[None], session_id: str = session_id) -> None:
+        session_tasks = _active_tasks.get(session_id)
+        if session_tasks is None:
+            return
+        session_tasks.discard(t)
+        if not session_tasks:
+            _active_tasks.pop(session_id, None)
+
+    task.add_done_callback(_discard)
 
 
 async def _process_chunk(session_id: str, chunk: TranscriptChunk) -> None:

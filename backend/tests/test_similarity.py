@@ -11,8 +11,16 @@ from .fakes import FakeNeo4jDriver
 
 
 @pytest.mark.asyncio
-async def test_query_best_match_hits_vector_index(monkeypatch):
-    driver = FakeNeo4jDriver([[{"node_id": "node-1", "score": 0.88}]])
+async def test_query_best_match_narrow_pass_sufficient_skips_overfetch(monkeypatch):
+    """When the narrow query already yields top_k same-session rows, the
+    expensive wide (overfetch) requery must NOT run."""
+    driver = FakeNeo4jDriver([
+        [
+            {"node_id": "node-1", "score": 0.88},
+            {"node_id": "node-2", "score": 0.71},
+            {"node_id": "node-3", "score": 0.60},
+        ],
+    ])
 
     async def fake_get_driver():
         return driver
@@ -24,18 +32,60 @@ async def test_query_best_match_hits_vector_index(monkeypatch):
     assert candidate is not None
     assert candidate.node_id == "node-1"
     assert candidate.score == pytest.approx(0.88)
+    assert len(driver.calls) == 1, "sufficient narrow results must not trigger overfetch"
     params = driver.calls[0]["params"]
     assert params["index_name"] == NODE_EMBEDDING_INDEX
-    # The vector index is global and filtered by session AFTER the top-k cut,
-    # so the query must overfetch (>= 50) — otherwise other sessions' nodes
-    # crowd out this session's true matches.
-    assert params["top_k"] >= 50, "vector query must overfetch before session filter"
+    assert params["top_k"] == 3, "hot path queries with the caller-requested k"
     assert params["session_id"] == "session-1"
 
 
 @pytest.mark.asyncio
+async def test_query_best_match_requeries_wide_when_session_results_short(monkeypatch):
+    """The vector index is global and filtered by session AFTER the top-k cut.
+    If the narrow window returns fewer than top_k same-session rows, requery
+    with the wide overfetch k so other sessions' nodes cannot crowd out this
+    session's true matches."""
+    driver = FakeNeo4jDriver([
+        [{"node_id": "node-1", "score": 0.70}],  # narrow pass: 1 < top_k=3
+        [
+            {"node_id": "node-9", "score": 0.91},  # surfaced by the wide pass
+            {"node_id": "node-1", "score": 0.70},
+        ],
+    ])
+
+    async def fake_get_driver():
+        return driver
+
+    monkeypatch.setattr(similarity, "get_driver", fake_get_driver)
+
+    candidate = await similarity._query_best_match("session-1", [0.1, 0.2], top_k=3)
+
+    assert candidate is not None
+    assert candidate.node_id == "node-9", "wide pass result wins"
+    assert len(driver.calls) == 2
+    assert driver.calls[0]["params"]["top_k"] == 3
+    assert driver.calls[1]["params"]["top_k"] == similarity._VECTOR_OVERFETCH_K
+
+
+@pytest.mark.asyncio
+async def test_query_best_match_no_match_after_both_passes(monkeypatch):
+    driver = FakeNeo4jDriver([[], []])
+
+    async def fake_get_driver():
+        return driver
+
+    monkeypatch.setattr(similarity, "get_driver", fake_get_driver)
+
+    candidate = await similarity._query_best_match("session-1", [0.1, 0.2], top_k=5)
+
+    assert candidate is None
+    assert len(driver.calls) == 2
+
+
+@pytest.mark.asyncio
 async def test_query_best_match_respects_larger_top_k(monkeypatch):
-    """A caller-requested top_k above the overfetch floor is passed through."""
+    """A caller-requested top_k at/above the overfetch floor is passed through
+    and never requeried (the wide pass would be identical)."""
     driver = FakeNeo4jDriver([[{"node_id": "node-1", "score": 0.9}]])
 
     async def fake_get_driver():
@@ -43,8 +93,10 @@ async def test_query_best_match_respects_larger_top_k(monkeypatch):
 
     monkeypatch.setattr(similarity, "get_driver", fake_get_driver)
 
-    await similarity._query_best_match("session-1", [0.1, 0.2], top_k=200)
+    candidate = await similarity._query_best_match("session-1", [0.1, 0.2], top_k=200)
 
+    assert candidate is not None
+    assert len(driver.calls) == 1, "top_k >= overfetch k makes a second pass pointless"
     assert driver.calls[0]["params"]["top_k"] == 200
 
 

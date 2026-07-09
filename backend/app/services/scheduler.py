@@ -1,7 +1,10 @@
 """Gardener scheduler and orchestration (Gate 5).
 
 Redis-only event-driven Gardener: runs when Builder publishes chunk events.
-Debounce controlled via GARDENER_DEBOUNCE_SECONDS in config (default 60s).
+Chunk events are ACKed on receipt and COALESCED per session: each session has
+at most one scheduled Gardener run pending at a time (window controlled via
+GARDENER_DEBOUNCE_SECONDS in config, default 5s), plus at most one follow-up
+if events arrive while a run is executing. The consumer loop never sleeps.
 """
 
 from __future__ import annotations
@@ -68,9 +71,10 @@ from ..config import get_settings
 from .llm import is_fake_llm_enabled
 from .redis_streams import (
     ack_event,
+    claim_pending_events,
     consume_events,
-    flush_stale_events,
     publish_node_needs_research,
+    SESSION_END_FLUSH_CHUNK_ID,
     STREAM_CHUNKS_ADDED,
     GROUP_GARDENER,
 )
@@ -123,14 +127,20 @@ def apply_vocabulary_to_nodes(
 
 class GardenerScheduler:
     """Redis-only event-driven Gardener scheduler.
-    
-    Simplified architecture: Builder publishes to Redis, Gardener consumes.
-    Debounce is configurable via config.gardener_debounce_seconds.
+
+    Coalescing design: the consumer ACKs every chunk event immediately and
+    schedules (at most) one debounced Gardener run per session — events that
+    arrive while a run is scheduled coalesce into it; events that arrive while
+    a run is EXECUTING request exactly one follow-up run. The consumer loop
+    itself never sleeps, so one session's debounce window cannot head-of-line
+    block another session's events. The debounce window comes from
+    config.gardener_debounce_seconds (instance attribute so tests can shrink
+    it); `self._lock` still serialises the actual Gardener runs.
     """
 
-    #: Minimal safety debounce (seconds) between Gardener runs per session.
-    #: Instance attribute so tests can shrink the window.
-    DEFAULT_SAFETY_DEBOUNCE_SECONDS = 5.0
+    #: Fallback debounce window if settings lack gardener_debounce_seconds
+    #: (e.g. stubbed settings objects in tests).
+    DEFAULT_DEBOUNCE_SECONDS = 5.0
 
     def __init__(self) -> None:
         self._agent = GardenerAgent()
@@ -138,32 +148,57 @@ class GardenerScheduler:
         self._task: asyncio.Task | None = None
         self._lock = asyncio.Lock()
         self._last_run: Dict[str, float] = {}
-        self._safety_debounce_seconds: float = self.DEFAULT_SAFETY_DEBOUNCE_SECONDS
+        self._debounce_seconds: float = float(
+            getattr(
+                get_settings(),
+                "gardener_debounce_seconds",
+                self.DEFAULT_DEBOUNCE_SECONDS,
+            )
+        )
+        #: session_id -> scheduled (not yet running) debounce task
+        self._pending_tasks: Dict[str, asyncio.Task] = {}
+        #: sessions whose Gardener run is currently executing
+        self._running: set[str] = set()
+        #: sessions that received events mid-run and need one follow-up run
+        self._rerun_requested: set[str] = set()
+        #: sessions whose scheduling state is dropped after the next run
+        #: (session-end flush sentinel observed)
+        self._flush_requested: set[str] = set()
 
     def clear_activity(self, session_id: str) -> None:
         """Drop per-session scheduling state (called when a session ends)."""
+        task = self._pending_tasks.pop(session_id, None)
+        if task is not None and not task.done():
+            task.cancel()
         self._last_run.pop(session_id, None)
+        self._rerun_requested.discard(session_id)
+        self._flush_requested.discard(session_id)
 
     async def start(self) -> None:
         """Start the Redis consumer loop."""
         if self._task and not self._task.done():
             return
-        
-        # Flush stale events from previous sessions (prevents processing dead events on restart)
+
+        self._stop_event.clear()
+
+        # Recover events left pending by a crash mid-run: reclaim them,
+        # discard stale ones (dead sessions), and schedule runs for the rest.
         try:
-            flushed = await flush_stale_events(
-                STREAM_CHUNKS_ADDED, 
-                GROUP_GARDENER, 
+            recovered = await claim_pending_events(
+                STREAM_CHUNKS_ADDED,
+                GROUP_GARDENER,
+                REDIS_CONSUMER_NAME,
                 max_age_seconds=30,  # Anything older than 30s is stale
             )
-            if flushed > 0:
-                logger.info("gardener.startup_flushed stale_events=%d", flushed)
+            for message_id, data in recovered:
+                await self._handle_event(message_id, data)
+            if recovered:
+                logger.info("gardener.startup_recovered pending_events=%d", len(recovered))
         except Exception as exc:
-            logger.warning("gardener.startup_flush_failed error=%s", exc)
-        
-        self._stop_event.clear()
+            logger.warning("gardener.startup_recovery_failed error=%s", exc)
+
         self._task = asyncio.create_task(
-            self._redis_consumer_loop(), 
+            self._redis_consumer_loop(),
             name="gardener-redis-consumer"
         )
         logger.info("gardener.started mode=redis_only stream=%s", STREAM_CHUNKS_ADDED)
@@ -171,6 +206,12 @@ class GardenerScheduler:
     async def stop(self) -> None:
         """Stop the Gardener scheduler."""
         self._stop_event.set()
+        pending = [task for task in self._pending_tasks.values() if not task.done()]
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self._pending_tasks.clear()
         if self._task:
             self._task.cancel()
             try:
@@ -180,14 +221,12 @@ class GardenerScheduler:
         logger.info("gardener.stopped")
 
     async def _redis_consumer_loop(self) -> None:
-        """Consume chunk events from Redis and trigger Gardener.
-        
+        """Consume chunk events from Redis and schedule Gardener runs.
+
         Ratio-based triggering: Builder only publishes to Redis every N chunks
-        (controlled by builder_gardener_ratio). This means each Redis event
-        represents a batch of Builder work, so we run Gardener for each event.
-        
-        Minimal safety debounce (5s) prevents rapid consecutive runs if
-        there's unexpected Redis burst.
+        (controlled by builder_gardener_ratio). Each event is ACKed on receipt
+        and coalesced into the session's scheduled run — the loop itself never
+        blocks on a debounce window.
         """
         settings = get_settings()
         ratio = settings.builder_gardener_ratio
@@ -219,12 +258,11 @@ class GardenerScheduler:
             logger.exception("gardener.consumer_crashed")
 
     async def _handle_event(self, message_id: str, data: Dict) -> None:
-        """Process a single Redis chunk event: debounce, run Gardener, ACK.
+        """ACK a Redis chunk event immediately and coalesce it into a run.
 
-        Events arriving inside the safety-debounce window are DEFERRED (we
-        sleep out the remaining window and then process), never ACK-and-
-        dropped — dropping them permanently lost the batch. This is race-safe
-        because there is a single consumer processing one event at a time.
+        The scheduling state (pending task / rerun flag) owns the work from
+        here on, so the event never needs redelivery. This never sleeps —
+        debouncing happens in the per-session scheduled task.
         """
         # Handle both bytes and string keys from Redis
         session_id = data.get("session_id") or data.get(b"session_id")
@@ -236,45 +274,102 @@ class GardenerScheduler:
         if isinstance(chunk_id, bytes):
             chunk_id = chunk_id.decode()
 
+        await ack_event(STREAM_CHUNKS_ADDED, GROUP_GARDENER, message_id)
+
         if not session_id:
             logger.warning("gardener.event_missing_session id=%s data=%s", message_id, data)
-            await ack_event(STREAM_CHUNKS_ADDED, GROUP_GARDENER, message_id)
             return
 
-        # Minimal safety debounce to prevent burst: defer (do not drop)
+        if chunk_id == SESSION_END_FLUSH_CHUNK_ID:
+            # Session ended: after the (coalesced) run triggered by this
+            # sentinel, drop the session's scheduling state so _last_run
+            # cannot leak entries for dead sessions.
+            self._flush_requested.add(session_id)
+
+        logger.debug(
+            "gardener.event_coalesced session=%s chunk=%s", session_id, chunk_id
+        )
+        self._schedule_run(session_id)
+
+    def _schedule_run(self, session_id: str) -> None:
+        """Ensure exactly one Gardener run is scheduled for the session.
+
+        - run currently executing -> request exactly one follow-up
+        - run already scheduled  -> coalesce (nothing to do)
+        - otherwise              -> schedule a task that fires when the
+                                    session's debounce window expires
+        """
+        if self._stop_event.is_set():
+            return
+
+        if session_id in self._running:
+            self._rerun_requested.add(session_id)
+            return
+
+        pending = self._pending_tasks.get(session_id)
+        if pending is not None and not pending.done():
+            return  # Coalesced into the already-scheduled run.
+
         loop = asyncio.get_event_loop()
         last_run = self._last_run.get(session_id, 0)
-        remaining = self._safety_debounce_seconds - (loop.time() - last_run)
+        delay = max(0.0, self._debounce_seconds - (loop.time() - last_run))
 
-        if remaining > 0:
-            logger.debug(
-                "gardener.safety_debounce_defer session=%s wait=%.1fs",
-                session_id,
-                remaining,
-            )
-            try:
-                # Sleep out the window, but wake early on shutdown.
-                await asyncio.wait_for(self._stop_event.wait(), timeout=remaining)
-            except asyncio.TimeoutError:
-                pass
+        task = asyncio.create_task(
+            self._debounced_run(session_id, delay),
+            name=f"gardener-debounce-{session_id}",
+        )
+        self._pending_tasks[session_id] = task
+
+    async def _debounced_run(self, session_id: str, delay: float) -> None:
+        """Wait out the debounce window, run the Gardener, handle follow-ups."""
+        try:
+            if delay > 0:
+                logger.debug(
+                    "gardener.debounce_scheduled session=%s wait=%.1fs",
+                    session_id,
+                    delay,
+                )
+                await asyncio.sleep(delay)
             if self._stop_event.is_set():
-                # Shutting down: leave the event un-ACKed so it is not lost.
                 return
 
-        logger.info(
-            "gardener.triggered session=%s chunk=%s",
-            session_id,
-            chunk_id,
-        )
+            # From here until the run finishes, new events for this session
+            # must request a follow-up rather than coalesce into this task.
+            # (No await between these two statements: atomic on the loop.)
+            self._pending_tasks.pop(session_id, None)
+            self._running.add(session_id)
+            try:
+                logger.info("gardener.triggered session=%s", session_id)
+                await self._run_session(session_id)
+            finally:
+                self._running.discard(session_id)
 
-        # Run Gardener
+            if session_id in self._rerun_requested:
+                # Events arrived mid-run: schedule exactly one follow-up.
+                self._rerun_requested.discard(session_id)
+                self._schedule_run(session_id)
+            elif session_id in self._flush_requested:
+                # Session-end flush handled and nothing further scheduled:
+                # drop all scheduling state for the session.
+                self._flush_requested.discard(session_id)
+                self.clear_activity(session_id)
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # pragma: no cover - _run_session already guards
+            logger.exception("gardener.debounced_run_failed session=%s", session_id)
+        finally:
+            if self._pending_tasks.get(session_id) is asyncio.current_task():
+                self._pending_tasks.pop(session_id, None)
+
+    async def _run_session(self, session_id: str) -> None:
+        """Run one Gardener cycle under the shared run lock."""
         async with self._lock:
             try:
                 if is_fake_llm_enabled():
                     await self._run_gardener_fake(session_id)
                 else:
                     await self._run_gardener(session_id)
-                self._last_run[session_id] = loop.time()
+                self._last_run[session_id] = asyncio.get_event_loop().time()
                 logger.info("gardener.complete session=%s", session_id)
             except GardenerAgentError as exc:
                 logger.warning(
@@ -285,8 +380,6 @@ class GardenerScheduler:
                 )
             except Exception:
                 logger.exception("gardener.run_failed session=%s", session_id)
-
-        await ack_event(STREAM_CHUNKS_ADDED, GROUP_GARDENER, message_id)
 
     async def _run_gardener(self, session_id: str) -> None:
         from time import perf_counter
@@ -831,14 +924,14 @@ class GardenerScheduler:
                         member_ids=member_ids,
                         created_at=datetime.now(timezone.utc),
                     )
-                    await upsert_flower(session_id, flower)
-                    # Mark nodes as belonging to this flower
-                    for node_id in member_ids:
-                        await set_node_flower(session_id, node_id, flower.id)
-                    
-                    await sse_manager.broadcast(session_id, FlowerCreatedEvent(payload=flower))
-                    logger.info("gardener.flower_created session=%s id=%s label=%s", session_id, flower.id, flower.label)
-                
+                    # upsert_flower reconciles BELONGS_TO membership atomically
+                    # and returns the flower with member_ids derived from the
+                    # reconciled edges — broadcast THAT, not our input.
+                    stored = await upsert_flower(session_id, flower)
+
+                    await sse_manager.broadcast(session_id, FlowerCreatedEvent(payload=stored))
+                    logger.info("gardener.flower_created session=%s id=%s label=%s", session_id, stored.id, stored.label)
+
                 elif action.action == "update" and action.flower_id:
                     if action.flower_id not in flowers_by_id:
                         continue
@@ -847,14 +940,11 @@ class GardenerScheduler:
                     flower.member_ids = member_ids
                     flower.stem_node_id = action.stem_node_id
                     flower.edge_count = edge_count
-                    await upsert_flower(session_id, flower)
-                    
-                    # Update node memberships
-                    # Note: strict implementation would clear old members, but valid for now
-                    for node_id in member_ids:
-                        await set_node_flower(session_id, node_id, flower.id)
+                    # Atomic membership reconciliation: dropped members are
+                    # detached and new members attached in one transaction.
+                    stored = await upsert_flower(session_id, flower)
 
-                    await sse_manager.broadcast(session_id, FlowerUpdatedEvent(payload=flower))
+                    await sse_manager.broadcast(session_id, FlowerUpdatedEvent(payload=stored))
 
             elif action.action == "dissolve" and action.flower_id:
                 if action.flower_id in flowers_by_id:

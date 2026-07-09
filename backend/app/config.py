@@ -130,11 +130,15 @@ class Settings(BaseSettings):
         "redis://localhost:6379",
         description="Redis connection URL for event streams.",
     )
-    gardener_debounce_seconds: int = Field(
-        30,
-        ge=5,
-        le=300,
-        description="DEPRECATED: Use builder_gardener_ratio instead. Minimum seconds between Gardener runs.",
+    gardener_debounce_seconds: float = Field(
+        5.0,
+        ge=0.0,
+        le=300.0,
+        description=(
+            "Per-session Gardener coalescing window in seconds: after a run, the next "
+            "run for that session is scheduled no sooner than this many seconds later; "
+            "chunk events arriving inside the window coalesce into that one scheduled run."
+        ),
     )
     builder_gardener_ratio: int = Field(
         5,

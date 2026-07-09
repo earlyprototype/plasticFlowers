@@ -89,6 +89,7 @@ class GraphRecorder:
     def __init__(self, existing_flowers: list[Flower] | None = None) -> None:
         self.existing_flowers = list(existing_flowers or [])
         self.upserted: list[Flower] = []
+        self.returned: list[Flower] = []
         self.deleted: list[str] = []
         self.memberships: list[tuple[str, str | None]] = []
 
@@ -97,8 +98,13 @@ class GraphRecorder:
             return list(self.existing_flowers)
 
         async def fake_upsert_flower(session_id: str, flower: Flower) -> Flower:
+            # Mirror the real upsert_flower contract: membership is reconciled
+            # against flower.member_ids and a NEW object is returned with
+            # member_ids re-derived from the reconciled BELONGS_TO edges.
             self.upserted.append(flower)
-            return flower
+            reconciled = flower.model_copy(deep=True)
+            self.returned.append(reconciled)
+            return reconciled
 
         async def fake_delete_flower(session_id: str, flower_id: str) -> None:
             self.deleted.append(flower_id)
@@ -143,15 +149,16 @@ async def test_create_flower_populates_member_ids_and_edge_count(monkeypatch):
     assert flower.edge_count == 2, "edge_count must count only internal edges"
     assert flower.stem_node_id == "node-a"
 
-    # Every member was attached via BELONGS_TO (set_node_flower)
-    assert recorder.memberships == [
-        ("node-a", flower.id),
-        ("node-b", flower.id),
-        ("node-c", flower.id),
-    ]
+    # Membership is reconciled inside upsert_flower — no per-node
+    # set_node_flower calls remain on the create path.
+    assert recorder.memberships == []
 
     created_events = sse.events_of(FlowerCreatedEvent)
     assert len(created_events) == 1
+    assert created_events[0].payload is recorder.returned[0], (
+        "broadcast must carry the flower RETURNED by upsert_flower (reconciled "
+        "member_ids), not the pre-upsert input"
+    )
     payload = created_events[0].model_dump()["payload"]
     assert payload["member_ids"] == ["node-a", "node-b", "node-c"], "SSE payload must carry member_ids"
     assert payload["edge_count"] == 2
@@ -195,11 +202,68 @@ async def test_update_flower_mutates_member_ids(monkeypatch):
     assert flower.stem_node_id == "node-b"
     assert flower.edge_count == 3, "edge_count must be refreshed on update"
 
+    # Membership reconciliation happens inside upsert_flower now
+    assert recorder.memberships == []
+
     updated_events = sse.events_of(FlowerUpdatedEvent)
     assert len(updated_events) == 1
+    assert updated_events[0].payload is recorder.returned[0], (
+        "broadcast must carry the reconciled flower returned by upsert_flower"
+    )
     assert updated_events[0].model_dump()["payload"]["member_ids"] == [
         "node-a", "node-b", "node-c", "node-d",
     ]
+
+
+@pytest.mark.asyncio
+async def test_update_flower_shrinking_membership_detaches_dropped_member(monkeypatch):
+    """Regression: an update that SHRINKS membership must hand the full
+    authoritative (shrunk) list to upsert_flower, and the broadcast flower —
+    whose member_ids are derived from the reconciled edges — must no longer
+    contain the dropped node. Previously the update path only attached new
+    members and never detached dropped ones."""
+    nodes = [
+        _make_node("node-a"),
+        _make_node("node-b", offset_s=1),
+        _make_node("node-c", offset_s=2),
+        _make_node("node-d", offset_s=3),
+    ]
+    relationships = [
+        _make_rel("rel-1", "node-a", "node-b"),
+        _make_rel("rel-2", "node-b", "node-c"),
+    ]
+    existing = _make_flower(
+        "flower-1", ["node-a", "node-b", "node-c", "node-d"], stem="node-a"
+    )
+    action = FlowerAction(
+        action="update",
+        flower_id="flower-1",
+        label="Shrunk Flower",
+        member_ids=["node-a", "node-b", "node-c"],  # node-d dropped
+        stem_node_id="node-a",
+    )
+
+    sse = FakeSSEManager()
+    recorder = GraphRecorder(existing_flowers=[existing])
+    recorder.patch(monkeypatch, sse)
+
+    scheduler = GardenerScheduler()
+    await scheduler._apply_flower_actions("session-1", [action], nodes, relationships)
+
+    assert len(recorder.upserted) == 1
+    assert recorder.upserted[0].member_ids == ["node-a", "node-b", "node-c"], (
+        "upsert_flower receives the authoritative (shrunk) member list, so it "
+        "can detach node-d's BELONGS_TO edge in the same transaction"
+    )
+    assert recorder.memberships == [], "no per-node set_node_flower calls on update"
+
+    updated_events = sse.events_of(FlowerUpdatedEvent)
+    assert len(updated_events) == 1
+    payload = updated_events[0].model_dump()["payload"]
+    assert "node-d" not in payload["member_ids"], (
+        "detached node must not appear in the derived member_ids"
+    )
+    assert payload["member_ids"] == ["node-a", "node-b", "node-c"]
 
 
 @pytest.mark.asyncio

@@ -29,6 +29,10 @@ logger = logging.getLogger(__name__)
 STREAM_CHUNKS_ADDED = "pf:chunks:added"  # Builder -> Gardener
 STREAM_NODES_NEEDS_RESEARCH = "pf:nodes:needs_research"  # Gardener -> Researcher
 
+# Sentinel chunk_id published by POST /sessions/{id}/end so the Gardener can
+# run one final pass and then drop the session's scheduling state.
+SESSION_END_FLUSH_CHUNK_ID = "session-end-flush"
+
 # Consumer group names
 GROUP_GARDENER = "gardener"
 GROUP_RESEARCHER = "researcher"
@@ -162,66 +166,129 @@ async def ensure_consumer_group(stream: str, group: str) -> None:
             raise
 
 
+def _message_age_seconds(message_id: str, now_ms: Optional[float] = None) -> float:
+    """Age of a stream entry derived from its ID (`<ms-timestamp>-<seq>`)."""
+    import time
+
+    raw = message_id.decode() if isinstance(message_id, bytes) else str(message_id)
+    try:
+        entry_ms = int(raw.split("-", 1)[0])
+    except (ValueError, IndexError):
+        return 0.0
+    if now_ms is None:
+        now_ms = time.time() * 1000
+    return max(0.0, (now_ms - entry_ms) / 1000.0)
+
+
+async def claim_pending_events(
+    stream: str,
+    group: str,
+    consumer: str,
+    *,
+    max_age_seconds: int = 60,
+) -> List[Tuple[str, Dict[str, Any]]]:
+    """Recover pending (delivered-but-unACKed) entries after a crash/restart.
+
+    Ensures the group exists, XAUTOCLAIMs every pending entry in the group to
+    ``consumer``, ACKs-and-discards entries older than ``max_age_seconds``
+    (stale events from dead sessions), and returns the fresh ones for the
+    caller to process and ACK normally. Nothing is destroyed: entries are
+    either explicitly discarded by age or handed back for processing, so a
+    crash mid-run no longer strands (or loses) pending work.
+
+    Returns:
+        List of (message_id, data) tuples that are still fresh enough to process.
+    """
+    client = await get_redis()
+
+    if not await client.exists(stream):
+        logger.debug("redis.claim_pending stream=%s does_not_exist", stream)
+        return []
+
+    await ensure_consumer_group(stream, group)
+
+    fresh: List[Tuple[str, Dict[str, Any]]] = []
+    discarded = 0
+    start_id = "0-0"
+    while True:
+        response = await client.xautoclaim(
+            stream, group, consumer, min_idle_time=0, start_id=start_id, count=100
+        )
+        # redis-py returns [next_start_id, messages] (plus a deleted-ids list
+        # on newer server/client combinations).
+        next_start_id, messages = response[0], response[1]
+
+        for message_id, data in messages:
+            if data is None:
+                # Entry was trimmed from the stream but lingered in the PEL.
+                await client.xack(stream, group, message_id)
+                discarded += 1
+                continue
+            if _message_age_seconds(message_id) > max_age_seconds:
+                await client.xack(stream, group, message_id)
+                discarded += 1
+                continue
+            fresh.append((message_id, data))
+
+        if not messages or str(next_start_id) in ("0-0", "0"):
+            break
+        start_id = next_start_id
+
+    if fresh or discarded:
+        logger.info(
+            "redis.claimed_pending stream=%s group=%s consumer=%s fresh=%d discarded_stale=%d",
+            stream, group, consumer, len(fresh), discarded,
+        )
+    return fresh
+
+
 async def flush_stale_events(stream: str, group: str, max_age_seconds: int = 60) -> int:
     """
-    Flush ALL pending and unread events from a consumer group on startup.
-    
-    This prevents processing stale events from dead sessions after a server restart.
-    Uses a nuclear approach: delete and recreate the group starting from '$' (latest).
-    
+    Discard STALE pending events from a consumer group on startup.
+
+    Ensures the group exists, then ACKs (discards) pending entries older than
+    ``max_age_seconds`` — stale triggers from sessions that died before a
+    restart. Fresh pending entries are left untouched. Unlike the previous
+    destroy-and-recreate implementation, this never throws away the group's
+    read position or fresh in-flight work.
+
     Args:
         stream: Stream name
         group: Consumer group name
-        max_age_seconds: UNUSED - kept for API compatibility
-        
+        max_age_seconds: Entries older than this are ACKed and discarded
+
     Returns:
-        Number of events that were pending (now flushed)
+        Number of stale events discarded
     """
     client = await get_redis()
-    
+
     try:
-        # Check if stream exists
         if not await client.exists(stream):
             logger.debug("redis.flush_stale stream=%s does_not_exist", stream)
             return 0
-        
-        # Get pending count before destroying
-        pending_count = 0
-        try:
-            pending = await client.xpending(stream, group)
-            pending_count = pending.get("pending", 0) if pending else 0
-        except redis.ResponseError:
-            pass  # Group might not exist
-        
-        # Get stream length to know how many unread messages exist
-        stream_len = await client.xlen(stream)
-        
-        # Delete the consumer group (this clears all pending and position info)
-        try:
-            await client.xgroup_destroy(stream, group)
-            logger.info(
-                "redis.group_destroyed stream=%s group=%s pending=%d stream_len=%d",
-                stream, group, pending_count, stream_len,
-            )
-        except redis.ResponseError as exc:
-            if "NOGROUP" not in str(exc):
-                raise
-        
-        # Recreate group starting from latest message (skip all existing)
-        await client.xgroup_create(stream, group, id="$", mkstream=True)
-        logger.info(
-            "redis.group_recreated stream=%s group=%s position=latest",
-            stream, group,
+
+        await ensure_consumer_group(stream, group)
+
+        discarded = 0
+        pending_entries = await client.xpending_range(
+            stream, group, min="-", max="+", count=1000
         )
-        
-        if pending_count > 0 or stream_len > 0:
+        for entry in pending_entries or []:
+            message_id = entry.get("message_id")
+            if message_id is None:
+                continue
+            if _message_age_seconds(message_id) > max_age_seconds:
+                await client.xack(stream, group, message_id)
+                discarded += 1
+
+        if discarded:
             logger.warning(
-                "redis.flushed_stale_events stream=%s group=%s pending=%d unread=%d",
-                stream, group, pending_count, stream_len,
+                "redis.flushed_stale_events stream=%s group=%s discarded=%d max_age=%ds",
+                stream, group, discarded, max_age_seconds,
             )
-        
-        return pending_count
-        
+
+        return discarded
+
     except Exception as exc:
         logger.warning("redis.flush_stale_failed stream=%s error=%s", stream, exc)
         return 0
@@ -377,10 +444,13 @@ __all__ = [
     "publish_event",
     "publish_chunk_added",
     "publish_node_needs_research",
+    # Sentinels
+    "SESSION_END_FLUSH_CHUNK_ID",
     # Consuming
     "ensure_consumer_group",
     "consume_events",
     "ack_event",
+    "claim_pending_events",
     "flush_stale_events",
     # Health
     "redis_health_check",
