@@ -1,11 +1,26 @@
 """Explore the current graph state for manual clustering exercise (Phase C.1)."""
 
+import os
+import sys
+from pathlib import Path
+
+from dotenv import load_dotenv
 from neo4j import GraphDatabase
 
 
 def main():
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
+
+    password = os.environ.get("NEO4J_PASSWORD")
+    if not password:
+        sys.exit(
+            "ERROR: NEO4J_PASSWORD is not set. "
+            "Set it in the repo-root .env (copy .env.example) or export it."
+        )
+
     driver = GraphDatabase.driver(
-        "neo4j://127.0.0.1:7687", auth=("neo4j", "pfNeo4j2025!")
+        os.environ.get("NEO4J_URI", "neo4j://127.0.0.1:7687"),
+        auth=(os.environ.get("NEO4J_USERNAME", "neo4j"), password),
     )
 
     with driver.session() as session:

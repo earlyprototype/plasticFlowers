@@ -12,7 +12,14 @@ def main():
     sys.path.insert(0, str(backend_root))
 
     load_dotenv(project_root / ".env")
-    os.environ.setdefault("NEO4J_PASSWORD", "pfNeo4j2025!")
+
+    if not os.environ.get("NEO4J_PASSWORD"):
+        sys.exit(
+            "ERROR: NEO4J_PASSWORD is not set.\n"
+            f"Set it in {project_root / '.env'} (copy .env.example) or export it "
+            "before starting the dev server."
+        )
+
     os.environ.setdefault("PLASTICFLOWER_FAKE_LLM", "0")
     os.environ.setdefault("PLASTICFLOWER_FAKE_EMBEDDINGS", "0")
 
@@ -21,4 +28,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

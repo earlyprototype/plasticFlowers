@@ -8,15 +8,22 @@ creating circular dependencies. Values map 1:1 with the Gate 3 plan.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Anchor the env file to the repo root (this file is backend/app/config.py)
+# so settings load identically regardless of the current working directory.
+_REPO_ROOT_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
     """Runtime settings loaded from environment variables or `.env` files."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=_REPO_ROOT_ENV_FILE, env_file_encoding="utf-8"
+    )
 
     neo4j_uri: str = Field(
         "neo4j://127.0.0.1:7687",

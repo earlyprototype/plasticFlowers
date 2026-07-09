@@ -3,7 +3,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 
-const DEFAULT_BASE_URL = process.env.API_BASE_URL ?? "http://localhost:8000";
+const DEFAULT_BASE_URL = process.env.API_BASE_URL ?? "http://localhost:8010";
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 async function main() {

@@ -96,9 +96,10 @@ if (-not $FakeMode) {
     }
 }
 
-if ([string]::IsNullOrWhiteSpace($env:NEO4J_PASSWORD)) {
-    Write-Host "WARNING: NEO4J_PASSWORD not set. Using default: pfNeo4j2025!" -ForegroundColor Yellow
-    $env:NEO4J_PASSWORD = "pfNeo4j2025!"
+if ([string]::IsNullOrWhiteSpace($env:NEO4J_PASSWORD) -or $env:NEO4J_PASSWORD -eq "your-neo4j-password-here") {
+    Write-Host "ERROR: NEO4J_PASSWORD is empty or still the placeholder value." -ForegroundColor Red
+    Write-Host "Edit $EnvFile and set NEO4J_PASSWORD to a real password before starting." -ForegroundColor Yellow
+    exit 1
 }
 
 Write-Host "  Environment loaded." -ForegroundColor Green
@@ -136,7 +137,7 @@ if ($RedisRunning) {
 if (-not $Neo4jRunning -or -not $RedisRunning) {
     Write-Host "  Starting Docker services..." -ForegroundColor Yellow
     Push-Location $DockerDir
-    docker compose up -d
+    docker compose --env-file $EnvFile up -d
     Pop-Location
     
     if (-not $Neo4jRunning) {
