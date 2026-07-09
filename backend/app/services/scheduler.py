@@ -438,7 +438,9 @@ class GardenerScheduler:
             
             # Phase 3: Publish research triggers (fire and forget)
             if result.research_actions:
-                await self._publish_research_actions(session_id, result.research_actions)
+                await self._publish_research_actions(
+                    session_id, result.research_actions, nodes_by_id
+                )
             
             # Phase D.5: Publish completion event to Redis
             try:
@@ -860,26 +862,45 @@ class GardenerScheduler:
         self,
         session_id: str,
         actions: Sequence,
+        nodes_by_id: Optional[Dict[str, Node]] = None,
     ) -> None:
-        """Publish research triggers to Redis."""
+        """Publish research triggers to Redis.
+
+        ResearchAction carries only node_id/entity_type/reason/priority
+        (the Gardener prompt does not ask the LLM for a label), so the
+        node's label is resolved from the graph at dispatch time.
+        """
+        nodes_by_id = nodes_by_id or {}
         for action in actions:
             try:
+                node = nodes_by_id.get(action.node_id)
+                if node is None:
+                    # Snapshot may be stale (node merged/renamed this cycle) -
+                    # fall back to a live lookup.
+                    node = await get_node(session_id, action.node_id)
+                if node is None:
+                    logger.warning(
+                        "gardener.research_skipped_missing_node session=%s node=%s",
+                        session_id, action.node_id,
+                    )
+                    continue
                 await publish_node_needs_research(
                     session_id=session_id,
                     node_id=action.node_id,
-                    label=action.label or "unknown",  # Fallback if label missing
+                    label=node.label,
                     entity_type=action.entity_type,
                     research_reason=action.reason,
                     priority=action.priority,
                 )
                 logger.info(
-                    "gardener.research_triggered session=%s node=%s type=%s reason=%s",
-                    session_id, action.node_id, action.entity_type, action.reason
+                    "gardener.research_triggered session=%s node=%s label=%s type=%s reason=%s",
+                    session_id, action.node_id, node.label, action.entity_type, action.reason
                 )
-            except Exception as exc:
-                logger.warning(
-                    "gardener.research_publish_failed session=%s node=%s error=%s",
-                    session_id, action.node_id, exc
+            except Exception:
+                # Keep the loop alive, but make dispatch failures visible.
+                logger.exception(
+                    "gardener.research_publish_failed session=%s node=%s",
+                    session_id, action.node_id,
                 )
 
 

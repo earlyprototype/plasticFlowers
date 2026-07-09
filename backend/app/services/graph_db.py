@@ -1264,7 +1264,10 @@ async def create_reference(session_id: str, reference: ReferenceNode) -> Referen
     # Serialize complex types
     props = reference.model_dump(exclude={"sources"})
 
-    
+    # Neo4j rejects map-typed properties: store vocabulary_suggestion as a
+    # JSON string (parsed back in _reference_from_value).
+    props["vocabulary_suggestion"] = json.dumps(props.get("vocabulary_suggestion") or {})
+
     # Convert enums to strings
     if "entity_type" in props:
         props["entity_type"] = props["entity_type"].value
@@ -1280,14 +1283,15 @@ async def create_reference(session_id: str, reference: ReferenceNode) -> Referen
     WITH r
     UNWIND $sources AS source_data
     MERGE (s:Source {url: source_data.url})
-    ON CREATE SET s.title = source_data.title, s.content = source_data.content
+    ON CREATE SET s.title = source_data.title, s.snippet = source_data.snippet, s.source_type = source_data.source_type
     MERGE (r)-[:CITED_BY]->(s)
     
     RETURN r
     """
     
-    # Prepare sources list for UNWIND
-    sources_data = [s.model_dump() for s in reference.sources]
+    # Prepare sources list for UNWIND (mode="json" turns the source_type
+    # enum into a string, which Neo4j accepts as a property)
+    sources_data = [s.model_dump(mode="json") for s in reference.sources]
     
     async with driver.session() as session:
         async def _work(tx, cypher: str, params: Dict[str, Any]) -> ReferenceNode:
@@ -1343,24 +1347,39 @@ async def get_reference(session_id: str, node_id: str) -> Optional[ReferenceNode
 def _reference_from_value(node: Neo4jNode, sources: List[Neo4jNode] = None) -> ReferenceNode:
     """Convert Neo4j node to ReferenceNode model."""
     props = dict(node)
-    
-    # Phase 5.2 Migration Support
-    # If "sources_json" exists (legacy), use it.
-    # If `sources` arg is provided (new), use it.
-    
+
+    # vocabulary_suggestion is stored as a JSON string (Neo4j rejects maps) -
+    # parse it back into a dict on read.
+    raw_vocab = props.get("vocabulary_suggestion")
+    if isinstance(raw_vocab, str):
+        try:
+            parsed_vocab = json.loads(raw_vocab)
+        except json.JSONDecodeError:
+            parsed_vocab = {}
+        props["vocabulary_suggestion"] = parsed_vocab if isinstance(parsed_vocab, dict) else {}
+
+    # Neo4j returns temporal properties as neo4j.time.DateTime - convert back
+    # to a native datetime for the Pydantic model.
+    props["fetched_at"] = _convert_datetime(props.get("fetched_at"))
+
     from ..models import ReferenceSource
 
     source_objects = []
-    
-    
+
     # Strictly use new Graph Schema (Phase 5.2+)
     if sources:
         for s in sources:
             s_props = dict(s)
-            source_objects.append(ReferenceSource(**s_props))
-            
+            source_objects.append(ReferenceSource(
+                title=s_props.get("title", ""),
+                url=s_props.get("url", ""),
+                # Older Source nodes stored the excerpt as `content`
+                snippet=(s_props.get("snippet") or s_props.get("content") or "")[:500],
+                source_type=s_props.get("source_type", "other"),
+            ))
+
     props["sources"] = source_objects
-    
+
     return ReferenceNode(**props)
 
 

@@ -104,7 +104,7 @@ async def trigger_node_research(
         session_id=session_id,
         node_id=node.id,
         label=node.label,
-        entity_type=str(node.entity_type),
+        entity_type=node.inferred_type or "concept",
         research_reason="user_requested",
         priority="high",
     )

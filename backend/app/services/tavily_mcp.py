@@ -49,15 +49,17 @@ async def tavily_search(
     *,
     max_results: int = 5,
     search_depth: str = "basic",
-    # include_answer: bool = True, # Not supported by MCP
+    include_answer: bool = True,
 ) -> TavilySearchResponse:
     """Search using Tavily MCP remote server via httpx.
-    
+
     Args:
         query: Search query string
         max_results: Maximum number of results (1-10)
         search_depth: "basic" or "advanced"
-        
+        include_answer: Ask Tavily for a synthesised direct answer
+            (maps to the Tavily API's include_answer flag)
+
     Returns:
         TavilySearchResponse with results and optional answer
         
@@ -84,7 +86,7 @@ async def tavily_search(
                 "query": query,
                 "max_results": max_results,
                 "search_depth": search_depth,
-                # "include_answer": include_answer,
+                "include_answer": include_answer,
             }
         }
     }
@@ -169,23 +171,7 @@ def _parse_tavily_response(query: str, data: Dict[str, Any]) -> TavilySearchResp
                         data = parsed_inner
                 except json.JSONDecodeError:
                     pass
-    # The result structure from Tavily MCP tool is usually inside content list
-    if "content" in data:
-        # MCP returns tool results in content array
-        # content: [{type: 'text', text: '...JSON string...'}]
-        for content_item in data.get("content", []):
-            if content_item.get("type") == "text":
-                try:
-                    # The inner text is the actual Tavily API JSON response
-                    raw_text = content_item.get("text", "{}")
-                    # Sometimes it's double encoded, or direct. 
-                    # If it parses to a dict with 'results', we use it.
-                    parsed_inner = json.loads(raw_text)
-                    if isinstance(parsed_inner, dict) and ("results" in parsed_inner or "answer" in parsed_inner):
-                        data = parsed_inner
-                except json.JSONDecodeError:
-                    pass
-    
+
     # Now map 'results' list to our dataclass
     results = []
     for item in data.get("results", []):
