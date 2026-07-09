@@ -1,35 +1,56 @@
 # Server Start Configuration
 
-## Official Startup Script
-Use the official script (recommended):
-```powershell
-.\scripts\start_mvp.ps1
+## Official Startup Scripts
+
+```bash
+# Linux / macOS
+bash scripts/start_mvp.sh            # add --fake-mode for no Gemini API calls
+# or via make
+make demo-fake
 ```
+
+```powershell
+# Windows
+.\scripts\start_mvp.ps1              # add -FakeMode for no Gemini API calls
+```
+
+Both scripts halt if `.env` is missing or `NEO4J_PASSWORD` is still the
+placeholder — copy `.env.example` to `.env` and fill in real values first.
 
 ## Manual Startup (if needed)
 
+### Neo4j + Redis (Docker)
+
+```bash
+# from the repo root — --env-file wires the root .env into compose
+docker compose -f docker/docker-compose.yml --env-file .env up -d
+# or: make up
+```
+
+**Ports: 7474 (browser), 7687 (bolt), 6379 (redis)**
+
 ### Backend (FastAPI)
-```powershell
+
+```bash
 cd backend
 python -m uvicorn app.main:app --reload --port 8010
+# or from the repo root: make backend
 ```
+
 **Port: 8010** ← Always use this port!
 
 ### Frontend (Next.js)
-```powershell
+
+```bash
 cd frontend
 npm run dev
+# or from the repo root: make frontend
 ```
+
 **Port: 3000** (default)
 
-### Neo4j (Docker)
-```powershell
-cd docker
-docker compose up -d
-```
-**Ports: 7474 (browser), 7687 (bolt)**
-
 ## URLs
+
 - Frontend: http://localhost:3000
 - Backend API: http://127.0.0.1:8010
 - Backend Health: http://127.0.0.1:8010/health
@@ -37,20 +58,37 @@ docker compose up -d
 - Neo4j Browser: http://localhost:7474
 
 ## Environment Variables
-Backend looks for:
+
+Backend looks for (root `.env`, see `.env.example`):
+
 - `GEMINI_API_KEY` - Required for LLM
-- `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD` - Database connection
-- Frontend looks for `.env.local` with `NEXT_PUBLIC_API_URL=http://127.0.0.1:8010`
+- `NEO4J_URI`, `NEO4J_USERNAME`, `NEO4J_PASSWORD` - Database connection
+
+Frontend looks for `NEXT_PUBLIC_API_URL=http://127.0.0.1:8010` (root `.env`
+or `frontend/.env.local`).
 
 ## Quick Kill & Restart
-```powershell
-# Kill all processes
-taskkill /F /IM node.exe 2>$null; taskkill /F /IM python.exe 2>$null
 
-# Start backend (background)
-cd backend; python -m uvicorn app.main:app --reload --port 8010
+Kill only the plasticFlower processes — target them by port, never
+`taskkill /IM node.exe` / `pkill python`, which kills unrelated processes.
 
-# Start frontend (background)
-cd frontend; npm run dev
+```bash
+# Linux / macOS — find and kill whatever holds the ports
+lsof -ti :8010 | xargs -r kill        # backend
+lsof -ti :3000 | xargs -r kill        # frontend
 ```
 
+```powershell
+# Windows — resolve PID by port, then kill that PID only
+Get-NetTCPConnection -LocalPort 8010 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }  # backend
+Get-NetTCPConnection -LocalPort 3000 -State Listen | ForEach-Object { Stop-Process -Id $_.OwningProcess -Force }  # frontend
+```
+
+Then restart:
+
+```bash
+# backend
+cd backend && python -m uvicorn app.main:app --reload --port 8010
+# frontend
+cd frontend && npm run dev
+```

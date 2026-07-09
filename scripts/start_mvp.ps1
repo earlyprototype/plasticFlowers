@@ -55,15 +55,11 @@ Write-Host "`n[2/5] Checking environment..." -ForegroundColor Yellow
 
 $EnvFile = Join-Path $ProjectRoot ".env"
 if (-not (Test-Path $EnvFile)) {
-    Write-Host "WARNING: .env file not found. Creating from .env.example..." -ForegroundColor Yellow
-    $ExampleFile = Join-Path $ProjectRoot ".env.example"
-    if (Test-Path $ExampleFile) {
-        Copy-Item $ExampleFile $EnvFile
-        Write-Host "  Created .env from .env.example. Please edit with your credentials." -ForegroundColor Yellow
-    } else {
-        Write-Host "ERROR: No .env or .env.example found." -ForegroundColor Red
-        exit 1
-    }
+    Write-Host "ERROR: .env file not found." -ForegroundColor Red
+    Write-Host "  Create it from the template, then fill in real values:" -ForegroundColor Yellow
+    Write-Host "    Copy-Item .env.example .env" -ForegroundColor Yellow
+    Write-Host "  At minimum set NEO4J_PASSWORD (and GEMINI_API_KEY for real mode)." -ForegroundColor Yellow
+    exit 1
 }
 
 # Load .env
@@ -71,6 +67,12 @@ Get-Content $EnvFile | ForEach-Object {
     if ($_ -match "^([^#][^=]+)=(.*)$") {
         [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), "Process")
     }
+}
+
+if ([string]::IsNullOrWhiteSpace($env:NEO4J_PASSWORD) -or $env:NEO4J_PASSWORD -eq "your-neo4j-password-here") {
+    Write-Host "ERROR: NEO4J_PASSWORD in .env is empty or still the placeholder value." -ForegroundColor Red
+    Write-Host "  Edit $EnvFile and set NEO4J_PASSWORD to a real password before starting." -ForegroundColor Yellow
+    exit 1
 }
 
 if (-not $FakeMode -and [string]::IsNullOrWhiteSpace($env:GEMINI_API_KEY)) {
@@ -89,7 +91,7 @@ $Neo4jRunning = docker ps --filter "name=plasticflower-neo4j" --format "{{.Names
 if ($Neo4jRunning) {
     Write-Host "  Neo4j already running." -ForegroundColor Green
 } else {
-    docker compose up -d
+    docker compose --env-file $EnvFile up -d
     Write-Host "  Neo4j starting... waiting 10s for readiness." -ForegroundColor Yellow
     Start-Sleep -Seconds 10
 }
@@ -190,6 +192,6 @@ try {
     Stop-Job $FrontendJob -ErrorAction SilentlyContinue
     Remove-Job $BackendJob -ErrorAction SilentlyContinue
     Remove-Job $FrontendJob -ErrorAction SilentlyContinue
-    Write-Host "Services stopped. Neo4j still running (stop with: docker compose -f docker/docker-compose.yml down)" -ForegroundColor Gray
+    Write-Host "Services stopped. Neo4j still running (stop with: docker compose -f docker/docker-compose.yml --env-file .env down)" -ForegroundColor Gray
 }
 
