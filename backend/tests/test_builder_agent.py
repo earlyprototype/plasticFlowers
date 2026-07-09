@@ -5,8 +5,8 @@ from itertools import count
 
 import pytest
 
-from backend.app.agents import BuilderAgent, BuilderAgentError
-from backend.app.models import Node, NodeStatus, RelationshipCategory, RelationshipSource
+from app.agents import BuilderAgent, BuilderAgentError
+from app.models import Node, NodeStatus, RelationshipCategory, RelationshipSource
 
 
 class FakeLLM:

@@ -4,9 +4,9 @@ from datetime import datetime, timezone
 
 import pytest
 
-from backend.app.models import Node, NodeStatus
-from backend.app.services import similarity
-from backend.app.services.graph_schema import NODE_EMBEDDING_INDEX
+from app.models import Node, NodeStatus
+from app.services import similarity
+from app.services.graph_schema import NODE_EMBEDDING_INDEX
 from .fakes import FakeNeo4jDriver
 
 
@@ -218,7 +218,7 @@ async def test_type_incompatibility_creates_new_node(monkeypatch):
         return similarity._MatchCandidate(node_id="node-apple-company", score=0.94)
     
     # Mock get_node to return the existing company node
-    from backend.app.services import graph_db
+    from app.services import graph_db
     async def fake_get_node(session_id: str, node_id: str):
         if node_id == "node-apple-company":
             return Node(
@@ -249,7 +249,7 @@ async def test_type_incompatibility_creates_new_node(monkeypatch):
 @pytest.mark.asyncio
 async def test_type_compatibility_threshold_0_80(monkeypatch):
     """Type compatibility should use 0.80 threshold (ADR-013)."""
-    from backend.app.config import get_settings
+    from app.config import get_settings
     settings = get_settings()
     
     # Verify threshold is 0.80
@@ -296,7 +296,7 @@ async def test_type_compatibility_threshold_0_80(monkeypatch):
 @pytest.mark.asyncio
 async def test_similarity_check_enabled_flag_exists():
     """Test that similarity_check_enabled flag exists in config."""
-    from backend.app.config import get_settings
+    from app.config import get_settings
     
     settings = get_settings()
     
@@ -312,7 +312,7 @@ async def test_similarity_check_enabled_flag_exists():
 @pytest.mark.asyncio
 async def test_low_confidence_skips_similarity(monkeypatch):
     """Verify that confidence threshold logic can be tested."""
-    from backend.app.config import get_settings
+    from app.config import get_settings
     
     settings = get_settings()
     

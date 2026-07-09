@@ -7,9 +7,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from backend.app.models import Node, NodeStatus, TranscriptChunk
-from backend.app.services.builder_service import BuilderService
-from backend.app.agents import BuilderAgentResult, UnresolvedRelationship
+from app.models import Node, NodeStatus, TranscriptChunk
+from app.services.builder_service import BuilderService
+from app.agents import BuilderAgentResult, UnresolvedRelationship
 
 
 def _make_chunk(text: str = "Test chunk", chunk_id: str = "chunk-1") -> TranscriptChunk:
@@ -49,8 +49,8 @@ async def test_similarity_check_disabled_creates_all_ghost_nodes(monkeypatch):
     
     This is the proper integration test for the rollback flag (ADR-011).
     """
-    from backend.app.config import Settings
-    from backend.app.services import builder_service
+    from app.config import Settings
+    from app.services import builder_service
     
     # Mock config with similarity check DISABLED
     disabled_settings = Settings(
@@ -159,8 +159,8 @@ async def test_similarity_check_enabled_performs_deduplication(monkeypatch):
     Test that when similarity_check_enabled=True, extracted nodes are
     checked against existing nodes and duplicates are matched (not created).
     """
-    from backend.app.config import Settings
-    from backend.app.services import builder_service
+    from app.config import Settings
+    from app.services import builder_service
     
     # Mock config with similarity check ENABLED
     enabled_settings = Settings(
@@ -193,7 +193,7 @@ async def test_similarity_check_enabled_performs_deduplication(monkeypatch):
     monkeypatch.setattr(builder_service, "generate_embedding", fake_embed)
     
     # Mock similarity check to return a match
-    from backend.app.services.similarity import _MatchCandidate
+    from app.services.similarity import _MatchCandidate
     
     async def fake_query_best_match(session_id: str, embedding, top_k: int):
         # Return high similarity match

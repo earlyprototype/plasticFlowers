@@ -4,8 +4,8 @@ from datetime import datetime, timezone
 
 import pytest
 
-from backend.app.models import Node, NodeStatus, Relationship, RelationshipCategory, RelationshipSource
-from backend.app.services import graph_db
+from app.models import Node, NodeStatus, Relationship, RelationshipCategory, RelationshipSource
+from app.services import graph_db
 from .fakes import FakeNeo4jDriver
 
 
