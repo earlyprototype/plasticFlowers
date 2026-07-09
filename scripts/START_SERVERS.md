@@ -31,10 +31,28 @@ docker compose -f docker/docker-compose.yml --env-file .env up -d
 
 ### Backend (FastAPI)
 
+Running uvicorn by hand does **not** read the root `.env` — the backend reads
+several switches straight from the process environment (fake mode,
+`PLASTICFLOWER_SKIP_NEO4J`, ...), so export `.env` first:
+
 ```bash
+# from the repo root — export .env into the shell, then start uvicorn
+set -a; . ./.env; set +a
 cd backend
 python -m uvicorn app.main:app --reload --port 8010
-# or from the repo root: make backend
+# or simply from the repo root: make backend
+# (runs backend/scripts/dev_server.py, which loads the root .env itself)
+```
+
+```powershell
+# Windows (PowerShell) — load .env into the session, then start uvicorn
+Get-Content .env | ForEach-Object {
+    if ($_ -match '^([^#][^=]+)=(.*)$') {
+        [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), 'Process')
+    }
+}
+cd backend
+python -m uvicorn app.main:app --reload --port 8010
 ```
 
 **Port: 8010** ← Always use this port!
@@ -87,7 +105,8 @@ Get-NetTCPConnection -LocalPort 3000 -State Listen | ForEach-Object { Stop-Proce
 Then restart:
 
 ```bash
-# backend
+# backend (export .env first — see "Backend (FastAPI)" above — or use make backend)
+set -a; . ./.env; set +a
 cd backend && python -m uvicorn app.main:app --reload --port 8010
 # frontend
 cd frontend && npm run dev

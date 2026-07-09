@@ -106,10 +106,15 @@ $BackendDir = Join-Path $ProjectRoot "backend"
 if ($FakeMode) {
     $env:PLASTICFLOWER_FAKE_LLM = "1"
     $env:PLASTICFLOWER_FAKE_EMBEDDINGS = "1"
+}
+# Respect fake-mode switches loaded from .env — do not clobber them here.
+$EffectiveFakeMode = $env:PLASTICFLOWER_FAKE_LLM -match '^(1|true|yes|on)$' -or
+    $env:PLASTICFLOWER_FAKE_EMBEDDINGS -match '^(1|true|yes|on)$'
+if ($FakeMode) {
     Write-Host "  Fake mode enabled (no Gemini API calls)." -ForegroundColor Yellow
+} elseif ($EffectiveFakeMode) {
+    Write-Host "  Fake mode enabled via .env (PLASTICFLOWER_FAKE_LLM/PLASTICFLOWER_FAKE_EMBEDDINGS)." -ForegroundColor Yellow
 } else {
-    Remove-Item Env:PLASTICFLOWER_FAKE_LLM -ErrorAction SilentlyContinue
-    Remove-Item Env:PLASTICFLOWER_FAKE_EMBEDDINGS -ErrorAction SilentlyContinue
     Write-Host "  Real Gemini mode." -ForegroundColor Green
 }
 
@@ -161,7 +166,7 @@ Write-Host "  Frontend: http://localhost:3000" -ForegroundColor White
 Write-Host "  Backend:  http://127.0.0.1:8010" -ForegroundColor White
 Write-Host "  Neo4j:    http://localhost:7474" -ForegroundColor White
 Write-Host ""
-if ($FakeMode) {
+if ($EffectiveFakeMode) {
     Write-Host "  Mode: FAKE (no Gemini API calls)" -ForegroundColor Yellow
 } else {
     Write-Host "  Mode: REAL Gemini" -ForegroundColor Green

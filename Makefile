@@ -3,7 +3,7 @@
 #
 #   make setup      install backend (.venv) + frontend (npm) dependencies
 #   make up         start Neo4j + Redis via Docker Compose (root .env wired)
-#   make backend    run FastAPI backend on http://127.0.0.1:8010
+#   make backend    run FastAPI backend on http://127.0.0.1:8010 (loads root .env)
 #   make frontend   run Next.js dev server on http://localhost:3000
 #   make demo-fake  full stack in fake mode (no Gemini API calls)
 #   make test       backend pytest + frontend vitest
@@ -27,8 +27,10 @@ setup:
 up:
 	$(COMPOSE) up -d
 
+# dev_server.py loads the root .env (python-dotenv) before starting uvicorn,
+# so os.getenv-read switches (fake mode, skip-neo4j, ...) are honoured here.
 backend:
-	cd backend && ../$(PYTHON) -m uvicorn app.main:app --host 127.0.0.1 --port 8010
+	$(PYTHON) backend/scripts/dev_server.py
 
 frontend:
 	cd frontend && npm run dev

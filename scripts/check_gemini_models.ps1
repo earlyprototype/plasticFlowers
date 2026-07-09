@@ -14,8 +14,11 @@ GEMINI API CHECK SCRIPT
 
 Usage:
   .\check_gemini_models.ps1          List available models
-  .\check_gemini_models.ps1 -Quota   Check quota and rate limits
   .\check_gemini_models.ps1 -Help    Show this help
+
+Note: the -Quota mode was removed (backend/check_quota.py no longer exists).
+For rate-limit/rotation diagnostics see backend/scripts/diagnostics/
+(e.g. check_model_rotation.py).
 
 "@ -ForegroundColor Cyan
     exit 0
@@ -24,12 +27,14 @@ Usage:
 $backendPath = Join-Path $PSScriptRoot "..\backend"
 
 if ($Quota) {
-    Write-Host "`nChecking Gemini API quota and rate limits..." -ForegroundColor Cyan
-    $pythonScript = Join-Path $backendPath "check_quota.py"
-} else {
-    Write-Host "`nChecking available Gemini models..." -ForegroundColor Cyan
-    $pythonScript = Join-Path $backendPath "list_models.py"
+    Write-Host "`nERROR: the -Quota mode was removed - backend/check_quota.py no longer exists." -ForegroundColor Red
+    Write-Host "For quota/rate-limit diagnostics, use the scripts in backend/scripts/diagnostics/," -ForegroundColor Yellow
+    Write-Host "e.g. backend/scripts/diagnostics/check_model_rotation.py (models + free-tier rate limits)." -ForegroundColor Yellow
+    exit 1
 }
+
+Write-Host "`nChecking available Gemini models..." -ForegroundColor Cyan
+$pythonScript = Join-Path $backendPath "scripts\diagnostics\list_models.py"
 
 # Check if virtual environment exists
 $venvPath = Join-Path $backendPath ".venv\Scripts\python.exe"
