@@ -149,6 +149,14 @@ export interface NodeMergedPayload {
   into_id: string;
 }
 
+// Mirrors backend/app/models/events.py NodeCorrectedPayload (STT label corrections)
+export interface NodeCorrectedPayload {
+  node_id: string;
+  old_label: string;
+  new_label: string;
+  confidence: number; // 0.0-1.0
+}
+
 export interface RelationshipRemovedPayload {
   id: string;
 }
@@ -179,6 +187,11 @@ export type NodeRemovedEvent = {
 export type NodeMergedEvent = {
   type: "node_merged";
   payload: NodeMergedPayload;
+};
+
+export type NodeCorrectedEvent = {
+  type: "node_corrected";
+  payload: NodeCorrectedPayload;
 };
 
 export type RelationshipAddedEvent = {
@@ -226,6 +239,7 @@ export type SSEvent =
   | NodeUpdatedEvent
   | NodeRemovedEvent
   | NodeMergedEvent
+  | NodeCorrectedEvent
   | RelationshipAddedEvent
   | RelationshipRemovedEvent
   | FlowerCreatedEvent

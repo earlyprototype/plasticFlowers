@@ -22,6 +22,11 @@ export function MicControl({ sessionId }: MicControlProps) {
         dispatcher.append(text, isFinal);
       }
     },
+    onEnd: () => {
+      // Speech recognition ended — flush whatever is buffered straight to the
+      // API instead of letting the final utterance wait for the stale timer.
+      void dispatcher.dispatchNow();
+    },
   });
 
   // console.log('[MIC] sessionId:', sessionId, 'supported:', speech.isSupported, 'state:', speech.state, 'error:', speech.error);

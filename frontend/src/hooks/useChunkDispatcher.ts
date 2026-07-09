@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { submitChunk } from "../lib/api";
 import type { ChunkSubmissionRequest } from "../lib/types";
@@ -9,57 +9,153 @@ export type UseChunkDispatcherOptions = {
   sessionId?: string | null;
   minSentences?: number;
   maxDelayMs?: number;
+  /** How often the stale-buffer timer checks whether buffered text should flush. */
+  staleCheckIntervalMs?: number;
+  /** Injectable clock returning seconds (used for chunk start/end timestamps and staleness). */
   clock?: () => number;
 };
 
 const DEFAULT_MIN_SENTENCES = 3;
 const DEFAULT_MAX_DELAY_MS = 15000;
+const DEFAULT_STALE_CHECK_INTERVAL_MS = 1000;
 const MAX_BUFFER_CHARS = 1000;
 
+export type ChunkBufferOptions = {
+  minSentences?: number;
+  maxDelayMs?: number;
+  maxBufferChars?: number;
+  /** Seconds clock for chunk start/end timestamps (test injection point). */
+  clock?: () => number;
+  /** Milliseconds clock for staleness checks; derived from `clock` when provided. */
+  nowMs?: () => number;
+};
+
+/**
+ * Framework-free chunk buffer.
+ *
+ * Accumulates transcript fragments and decides when they should be dispatched:
+ * - `shouldDispatch()` — sentence/char thresholds reached, or
+ * - `isStale()` — buffered text has waited longer than `maxDelayMs`
+ *   (covers unpunctuated Web Speech transcripts that never trip the sentence gate).
+ */
+export function createChunkBuffer(options: ChunkBufferOptions = {}) {
+  const {
+    minSentences = DEFAULT_MIN_SENTENCES,
+    maxDelayMs = DEFAULT_MAX_DELAY_MS,
+    maxBufferChars = MAX_BUFFER_CHARS,
+    clock,
+    nowMs = clock ? () => clock() * 1000 : () => performance.now(),
+  } = options;
+
+  let parts: string[] = [];
+  let sentences = 0;
+  let startTimestamp = getTimestamp(clock);
+  let bufferStartedAtMs: number | null = null;
+
+  const reset = () => {
+    parts = [];
+    sentences = 0;
+    startTimestamp = getTimestamp(clock);
+    bufferStartedAtMs = null;
+  };
+
+  return {
+    append(text: string): void {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      if (parts.length === 0) {
+        startTimestamp = getTimestamp(clock);
+        bufferStartedAtMs = nowMs();
+      }
+      parts.push(trimmed);
+      sentences += countSentences(trimmed);
+    },
+    shouldDispatch(): boolean {
+      if (parts.length === 0) return false;
+      const totalChars = parts.reduce((sum, str) => sum + str.length, 0);
+      return sentences >= minSentences || totalChars >= maxBufferChars;
+    },
+    isStale(): boolean {
+      return (
+        parts.length > 0 &&
+        bufferStartedAtMs !== null &&
+        nowMs() - bufferStartedAtMs >= maxDelayMs
+      );
+    },
+    /** Drain the buffer into a submission payload; null when empty. */
+    takeChunk(): ChunkSubmissionRequest | null {
+      if (parts.length === 0) return null;
+      const payload: ChunkSubmissionRequest = {
+        text: parts.join(" ").trim(),
+        start_time: startTimestamp,
+        end_time: getTimestamp(clock),
+      };
+      // Reset IMMEDIATELY so new input can accumulate while the network call runs
+      reset();
+      return payload;
+    },
+    reset,
+    get pendingText(): string {
+      return parts.join(" ");
+    },
+    get pendingSentences(): number {
+      return sentences;
+    },
+  };
+}
+
+export type ChunkBuffer = ReturnType<typeof createChunkBuffer>;
+
+/**
+ * Interval timer that flushes a stale non-empty buffer.
+ * Returns a stop function that clears the interval (call on unmount).
+ */
+export function startStaleFlushTimer(
+  buffer: Pick<ChunkBuffer, "isStale">,
+  flush: () => void,
+  intervalMs: number,
+): () => void {
+  const intervalId = setInterval(() => {
+    if (buffer.isStale()) {
+      flush();
+    }
+  }, intervalMs);
+  return () => clearInterval(intervalId);
+}
+
 export function useChunkDispatcher(options: UseChunkDispatcherOptions = {}) {
-  const { sessionId, minSentences = DEFAULT_MIN_SENTENCES, maxDelayMs = DEFAULT_MAX_DELAY_MS, clock } =
-    options;
+  const {
+    sessionId,
+    minSentences = DEFAULT_MIN_SENTENCES,
+    maxDelayMs = DEFAULT_MAX_DELAY_MS,
+    staleCheckIntervalMs = DEFAULT_STALE_CHECK_INTERVAL_MS,
+    clock,
+  } = options;
   const [isDispatching, setIsDispatching] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const bufferRef = useRef<string[]>([]);
-  const sentencesRef = useRef(0);
-  const startTimestampRef = useRef<number>(getTimestamp(clock));
-  const lastDispatchRef = useRef<number>(getTimestamp(clock) * 1000);
 
-  const resetBuffer = useCallback(() => {
-    bufferRef.current = [];
-    sentencesRef.current = 0;
-    startTimestampRef.current = getTimestamp(clock);
-  }, [clock]);
+  // Lazily create the buffer once; thresholds/clock are fixed for the hook's lifetime.
+  const bufferRef = useRef<ChunkBuffer | null>(null);
+  if (bufferRef.current === null) {
+    bufferRef.current = createChunkBuffer({ minSentences, maxDelayMs, clock });
+  }
+  const buffer = bufferRef.current;
 
-  const flushIfStale = useCallback(async () => {
-    if (!sessionId || bufferRef.current.length === 0) return;
-    const nowMs = performance.now();
-    if (nowMs - lastDispatchRef.current > maxDelayMs) {
-      await dispatchChunk();
-    }
-  }, [sessionId, maxDelayMs]);
+  const sessionIdRef = useRef(sessionId);
+  useEffect(() => {
+    sessionIdRef.current = sessionId;
+  }, [sessionId]);
 
   const dispatchChunk = useCallback(async () => {
-    if (!sessionId || bufferRef.current.length === 0) return;
+    const targetSessionId = sessionIdRef.current;
+    if (!targetSessionId) return;
+    const payload = buffer.takeChunk();
+    if (!payload) return;
+
     setIsDispatching(true);
     setError(null);
-    
-    // Capture snapshot of current buffer
-    const text = bufferRef.current.join(" ").trim();
-    const endTime = getTimestamp(clock);
-    const payload: ChunkSubmissionRequest = {
-      text,
-      start_time: startTimestampRef.current,
-      end_time: endTime,
-    };
-
-    // Reset buffer IMMEDIATELY so new input can accumulate while we wait for network
-    resetBuffer();
-
     try {
-      await submitChunk(sessionId, payload);
-      lastDispatchRef.current = performance.now();
+      await submitChunk(targetSessionId, payload);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       // Note: We do not restore the buffer on error to avoid ordering/duplication issues
@@ -67,24 +163,30 @@ export function useChunkDispatcher(options: UseChunkDispatcherOptions = {}) {
     } finally {
       setIsDispatching(false);
     }
-  }, [sessionId, clock, resetBuffer]);
+  }, [buffer]);
 
   const append = useCallback(
     async (text: string, isFinal: boolean) => {
       if (!text.trim()) return;
-      bufferRef.current.push(text.trim());
-      sentencesRef.current += countSentences(text);
-      
-      const totalChars = bufferRef.current.reduce((sum, str) => sum + str.length, 0);
-
-      if (isFinal && (sentencesRef.current >= minSentences || totalChars >= MAX_BUFFER_CHARS)) {
+      buffer.append(text);
+      if (isFinal && (buffer.shouldDispatch() || buffer.isStale())) {
         await dispatchChunk();
-      } else if (isFinal) {
-        await flushIfStale();
       }
     },
-    [minSentences, dispatchChunk, flushIfStale],
+    [buffer, dispatchChunk],
   );
+
+  // Real timer flushing stale buffers — without it, the session's final
+  // utterance could sit in the buffer forever (staleness was previously only
+  // evaluated on the next append).
+  useEffect(() => {
+    if (!sessionId) return;
+    return startStaleFlushTimer(buffer, () => void dispatchChunk(), staleCheckIntervalMs);
+  }, [sessionId, buffer, dispatchChunk, staleCheckIntervalMs]);
+
+  const resetBuffer = useCallback(() => {
+    buffer.reset();
+  }, [buffer]);
 
   return useMemo(
     () => ({
@@ -93,10 +195,10 @@ export function useChunkDispatcher(options: UseChunkDispatcherOptions = {}) {
       reset: resetBuffer,
       isDispatching,
       error,
-      pendingText: bufferRef.current.join(" "),
-      pendingSentences: sentencesRef.current,
+      pendingText: buffer.pendingText,
+      pendingSentences: buffer.pendingSentences,
     }),
-    [append, dispatchChunk, resetBuffer, isDispatching, error],
+    [append, dispatchChunk, resetBuffer, isDispatching, error, buffer],
   );
 }
 
@@ -110,4 +212,3 @@ function getTimestamp(clock?: () => number): number {
 }
 
 export type UseChunkDispatcherReturn = ReturnType<typeof useChunkDispatcher>;
-

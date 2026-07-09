@@ -12,14 +12,21 @@ export type UseSpeechRecognitionOptions = {
    * Invoked whenever the recognition API yields a transcript.
    */
   onTranscript?: (text: string, isFinal: boolean) => void;
+  /**
+   * Invoked when recognition ends (expected or unexpected), after any
+   * remaining transcript has been flushed via `onTranscript`. Callers can use
+   * this to flush buffered text to the API (see MicControl).
+   */
+  onEnd?: () => void;
 };
 
 export type SpeechState = "idle" | "listening" | "stopping";
 
 export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) {
-  const { lang = "en-GB", interimResults = true, continuous = true, onTranscript } = options;
+  const { lang = "en-GB", interimResults = true, continuous = true, onTranscript, onEnd } = options;
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const onTranscriptRef = useRef(onTranscript);
+  const onEndRef = useRef(onEnd);
   const [supported, setSupported] = useState(false);
   const [state, setState] = useState<SpeechState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -34,10 +41,11 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) 
   const sentCursorRef = useRef(0);
   const fullTranscriptRef = useRef("");
 
-  // Keep callback ref updated without recreating recognition
+  // Keep callback refs updated without recreating recognition
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
-  }, [onTranscript]);
+    onEndRef.current = onEnd;
+  }, [onTranscript, onEnd]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -150,6 +158,10 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) 
         clearTimeout(forceFinalizationTimerRef.current);
         forceFinalizationTimerRef.current = null;
       }
+
+      // Signal speech end AFTER the final transcript flush above so consumers
+      // can flush their chunk buffers to the API.
+      onEndRef.current?.();
     };
 
     recognitionRef.current = recognition as SpeechRecognition;
