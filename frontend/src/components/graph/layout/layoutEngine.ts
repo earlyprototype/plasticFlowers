@@ -1,22 +1,18 @@
+import type { FcoseLayoutOptions } from 'cytoscape-fcose';
 import type { Node, Relationship, Flower } from '../../../lib/types';
 
 /**
  * Layout Engine - Pure functions for graph layout calculations
- * 
- * Zero Cytoscape coupling - all functions are pure and testable without DOM.
+ *
+ * Zero Cytoscape coupling (type-only import) - all functions are pure and
+ * testable without DOM.
  */
 
-export interface LayoutOptions {
-  algorithm: string;
-  nodeRepulsion: number;
-  idealEdgeLength: number;
-  nodeSeparation: number;
-  iterations: number;
-  gravity: number;
-  nestingFactor: number;
-  gravityCompound: number;
-  gravityRangeCompound: number;
-}
+/**
+ * Layout options are the real fcose layout options from `@types/cytoscape-fcose`
+ * (the same shape as `LAYOUT_CONFIG` in `../config/layoutConfig.ts`).
+ */
+export type LayoutOptions = FcoseLayoutOptions;
 
 export interface LayoutResult {
   nodePositions: Map<string, { x: number; y: number }>;

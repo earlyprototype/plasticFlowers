@@ -197,12 +197,13 @@ function syncEdges(
     const sourceNode = cy.getElementById(relationship.source_id);
     const targetNode = cy.getElementById(relationship.target_id);
     
-    const sourceParent = sourceNode.parent();
-    const targetParent = targetNode.parent();
-    
-    const isInterFlower = 
-      sourceParent.nonempty() && 
-      targetParent.nonempty() && 
+    // .parent() returns a NodeCollection; take the first (only) element for singular ops
+    const sourceParent = sourceNode.parent().first();
+    const targetParent = targetNode.parent().first();
+
+    const isInterFlower =
+      sourceParent.nonempty() &&
+      targetParent.nonempty() &&
       sourceParent.id() !== targetParent.id() &&
       sourceParent.hasClass('flower') &&
       targetParent.hasClass('flower');

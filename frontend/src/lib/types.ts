@@ -42,6 +42,7 @@ export interface Flower {
   label: string;
   stem_node_id: string;
   edge_count: number;
+  member_ids: string[]; // Node ids belonging to this flower (may be empty on a fresh flower)
   created_at: string;
 }
 

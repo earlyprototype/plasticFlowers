@@ -120,6 +120,7 @@ describe('graphRenderer', () => {
           id: 'flower1',
           label: 'Test Cluster',
           stem_node_id: 'node1',
+          edge_count: 1,
           member_ids: ['node1', 'node2'],
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -183,6 +184,7 @@ describe('graphRenderer', () => {
           id: 'flower1',
           label: 'Flower 1',
           stem_node_id: 'node1',
+          edge_count: 1,
           member_ids: ['node1'],
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -212,7 +214,7 @@ describe('graphRenderer', () => {
       syncGraphStructure(cy, { nodes, relationships: [], flowers }, layoutResult);
 
       const node = cy.getElementById('node1');
-      expect(node.parent().id()).toBe('flower1');
+      expect(node.parent().first().id()).toBe('flower1');
     });
 
     it('should preserve collapse state on flower updates', () => {
@@ -228,6 +230,7 @@ describe('graphRenderer', () => {
           id: 'flower1',
           label: 'Updated Flower',
           stem_node_id: 'node1',
+          edge_count: 1,
           member_ids: ['node1'],
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -327,6 +330,7 @@ describe('graphRenderer', () => {
           id: 'flower1',
           label: 'Flower 1',
           stem_node_id: 'node1',
+          edge_count: 1,
           member_ids: ['node1'],
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -334,6 +338,7 @@ describe('graphRenderer', () => {
           id: 'flower2',
           label: 'Flower 2',
           stem_node_id: 'node2',
+          edge_count: 1,
           member_ids: ['node2'],
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -397,6 +402,7 @@ describe('graphRenderer', () => {
           id: 'flower1',
           label: 'Flower 1',
           stem_node_id: 'node1',
+          edge_count: 1,
           member_ids: ['node1', 'node2'],
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -532,6 +538,7 @@ describe('graphRenderer', () => {
           id: 'flower1',
           label: 'Test Cluster',
           stem_node_id: 'node1',
+          edge_count: 1,
           member_ids: ['node1', 'node2'],
           created_at: '2025-01-01T00:00:00Z',
         },
