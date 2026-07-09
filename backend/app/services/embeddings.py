@@ -12,7 +12,6 @@ import threading
 from typing import List, Tuple
 
 from google import genai
-import requests
 
 from ..config import get_settings
 

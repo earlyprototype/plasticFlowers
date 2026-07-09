@@ -1,10 +1,19 @@
-"""Quick script to check session data."""
+"""Quick script to check session data.
+
+Usage: python check_session.py <session_id>
+Example: python check_session.py session_f7010545dc254a77861f4455eed96863
+"""
 import asyncio
+import sys
 from app.services.graph_db import get_driver
 
 async def main():
+    if len(sys.argv) < 2:
+        print("Usage: python check_session.py <session_id>")
+        print("Example: python check_session.py session_f7010545dc254a77861f4455eed96863")
+        sys.exit(1)
+    session_id = sys.argv[1]
     driver = await get_driver()
-    session_id = "session_f7010545dc254a77861f4455eed96863"
     
     async with driver.session() as s:
         # Check nodes

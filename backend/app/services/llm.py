@@ -12,8 +12,6 @@ import threading
 from typing import Any, Mapping, MutableMapping
 
 from google import genai
-from google.genai import types
-import requests
 
 from ..config import get_settings
 from .llm_utils import create_gemini_config
@@ -53,7 +51,8 @@ _FALLBACK_MODELS = [
 
 def get_call_count() -> int:
     """Return total API calls made this session."""
-    return _CALL_COUNT
+    with _CALL_COUNT_LOCK:
+        return _CALL_COUNT
 
 def reset_call_count() -> None:
     """Reset API call counter."""
@@ -131,12 +130,6 @@ async def generate_structured_json(
     settings = get_settings()
     # Handle legacy model names or defaults
     model_name = model or settings.gemini_model
-    
-    # Ensure usage of correct model family if defaults are stale
-    if "gemini-2" in model_name and "gemini-3" in settings.gemini_model_builder:
-        # Heuristic: if requested model is 2.x but config suggests 3.x is available/preferred, warn or upgrade
-        # For now we respect the override but log
-        pass
 
     retries = max(0, int(settings.gemini_max_retries))
     attempt = 0

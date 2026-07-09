@@ -6,9 +6,9 @@ async def check_redis():
     r = redis.from_url('redis://localhost:6379')
     
     # Check pending messages in the stream
-    print('=== REDIS STREAM: chunks:added ===')
+    print('=== REDIS STREAM: pf:chunks:added ===')
     try:
-        info = await r.xinfo_stream('chunks:added')
+        info = await r.xinfo_stream('pf:chunks:added')
         print(f"Stream length: {info['length']}")
         first = info.get('first-entry')
         last = info.get('last-entry')
@@ -20,7 +20,7 @@ async def check_redis():
     # Check consumer group pending
     print('\n=== CONSUMER GROUP: gardener ===')
     try:
-        groups = await r.xinfo_groups('chunks:added')
+        groups = await r.xinfo_groups('pf:chunks:added')
         for g in groups:
             print(f"Group: {g['name']}, Pending: {g['pending']}, Consumers: {g['consumers']}")
     except Exception as e:
@@ -29,7 +29,7 @@ async def check_redis():
     # Check first 5 messages
     print('\n=== FIRST 5 MESSAGES (oldest) ===')
     try:
-        msgs = await r.xrange('chunks:added', count=5)
+        msgs = await r.xrange('pf:chunks:added', count=5)
         for msg_id, data in msgs:
             session = data.get(b'session_id', b'?').decode()
             print(f'  {msg_id}: session={session}')
@@ -39,7 +39,7 @@ async def check_redis():
     # Check last 5 messages
     print('\n=== LAST 5 MESSAGES (newest) ===')
     try:
-        msgs = await r.xrevrange('chunks:added', count=5)
+        msgs = await r.xrevrange('pf:chunks:added', count=5)
         for msg_id, data in msgs:
             session = data.get(b'session_id', b'?').decode()
             print(f'  {msg_id}: session={session}')

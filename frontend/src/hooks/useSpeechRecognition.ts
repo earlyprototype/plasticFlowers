@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
+import { debugLog } from "../lib/debug";
+
 type SpeechRecognitionConstructor =
   | typeof window.SpeechRecognition
   | typeof window.webkitSpeechRecognition;
@@ -12,14 +14,21 @@ export type UseSpeechRecognitionOptions = {
    * Invoked whenever the recognition API yields a transcript.
    */
   onTranscript?: (text: string, isFinal: boolean) => void;
+  /**
+   * Invoked when recognition ends (expected or unexpected), after any
+   * remaining transcript has been flushed via `onTranscript`. Callers can use
+   * this to flush buffered text to the API (see MicControl).
+   */
+  onEnd?: () => void;
 };
 
 export type SpeechState = "idle" | "listening" | "stopping";
 
 export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) {
-  const { lang = "en-GB", interimResults = true, continuous = true, onTranscript } = options;
+  const { lang = "en-GB", interimResults = true, continuous = true, onTranscript, onEnd } = options;
   const recognitionRef = useRef<SpeechRecognition | null>(null);
   const onTranscriptRef = useRef(onTranscript);
+  const onEndRef = useRef(onEnd);
   const [supported, setSupported] = useState(false);
   const [state, setState] = useState<SpeechState>("idle");
   const [error, setError] = useState<string | null>(null);
@@ -28,16 +37,16 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) 
   // Continuous chunking tracking
   const interimStartTimeRef = useRef<number | null>(null);
   const forceFinalizationTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const isListeningRef = useRef(false);
-  
+
   // New refs for continuous cursor tracking
   const sentCursorRef = useRef(0);
   const fullTranscriptRef = useRef("");
 
-  // Keep callback ref updated without recreating recognition
+  // Keep callback refs updated without recreating recognition
   useEffect(() => {
     onTranscriptRef.current = onTranscript;
-  }, [onTranscript]);
+    onEndRef.current = onEnd;
+  }, [onTranscript, onEnd]);
 
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -67,7 +76,7 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) 
       const chunk = fullText.substring(sentCursorRef.current).trim();
       
       if (chunk && onTranscriptRef.current) {
-        console.log('[SPEECH] Sending background chunk:', chunk.substring(0, 20) + '...');
+        debugLog('[SPEECH] Sending background chunk:', chunk.substring(0, 20) + '...');
         onTranscriptRef.current(chunk, true); // Send as final
       }
       
@@ -123,7 +132,6 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) 
       console.error('[SPEECH] Error:', event.error);
       setError(event.error);
       setState("idle");
-      isListeningRef.current = false;
     };
 
     recognition.onend = () => {
@@ -132,14 +140,13 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) 
          // We manually call the logic here one last time
          const chunk = fullTranscriptRef.current.substring(sentCursorRef.current).trim();
          if (chunk && onTranscriptRef.current) {
-           console.log('[SPEECH] Flushing final chunk:', chunk);
+           debugLog('[SPEECH] Flushing final chunk:', chunk);
            onTranscriptRef.current(chunk, true);
          }
       }
 
       setState("idle");
-      isListeningRef.current = false;
-      
+
       // Reset all cursors
       sentCursorRef.current = 0;
       fullTranscriptRef.current = "";
@@ -150,6 +157,10 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) 
         clearTimeout(forceFinalizationTimerRef.current);
         forceFinalizationTimerRef.current = null;
       }
+
+      // Signal speech end AFTER the final transcript flush above so consumers
+      // can flush their chunk buffers to the API.
+      onEndRef.current?.();
     };
 
     recognitionRef.current = recognition as SpeechRecognition;
@@ -167,8 +178,7 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) 
     if (!recognitionRef.current || !supported) return;
     setError(null);
     setState("listening");
-    isListeningRef.current = true;
-    
+
     // Reset cursors on start
     sentCursorRef.current = 0;
     fullTranscriptRef.current = "";
@@ -179,14 +189,13 @@ export function useSpeechRecognition(options: UseSpeechRecognitionOptions = {}) 
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setState("idle");
-      isListeningRef.current = false;
     }
   }, [supported]);
 
   const stop = useCallback(() => {
     if (!recognitionRef.current) return;
     setState("stopping");
-    // isListeningRef will be set to false in onend
+    // state returns to "idle" in onend
     recognitionRef.current.stop();
   }, []);
 

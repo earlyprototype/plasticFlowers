@@ -1,5 +1,7 @@
 # plasticFlower — Pre-Implementation Report
 
+> **Historical planning document** — describes the pre-implementation design, not the current system. See [_docs/_audit/2026-07-08_audit_report.md](../../_audit/2026-07-08_audit_report.md) for current state.
+
 > **Purpose:** Final review checkpoint before implementation begins
 > **Status:** Ready for sign-off
 > **Date:** 13 December 2025

@@ -7,9 +7,17 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from backend.app.models import Node, NodeStatus, TranscriptChunk
-from backend.app.services.builder_service import BuilderService
-from backend.app.agents import BuilderAgentResult, UnresolvedRelationship
+from app.models import (
+    Node,
+    NodeStatus,
+    Relationship,
+    RelationshipAddedEvent,
+    RelationshipCategory,
+    RelationshipSource,
+    TranscriptChunk,
+)
+from app.services.builder_service import BuilderService
+from app.agents import BuilderAgentResult, UnresolvedRelationship
 
 
 def _make_chunk(text: str = "Test chunk", chunk_id: str = "chunk-1") -> TranscriptChunk:
@@ -49,8 +57,8 @@ async def test_similarity_check_disabled_creates_all_ghost_nodes(monkeypatch):
     
     This is the proper integration test for the rollback flag (ADR-011).
     """
-    from backend.app.config import Settings
-    from backend.app.services import builder_service
+    from app.config import Settings
+    from app.services import builder_service
     
     # Mock config with similarity check DISABLED
     disabled_settings = Settings(
@@ -93,14 +101,10 @@ async def test_similarity_check_disabled_creates_all_ghost_nodes(monkeypatch):
     
     async def fake_list_relationships(*args, **kwargs):
         return []
-    
-    async def fake_save_chunk(*args):
-        pass
-    
+
     monkeypatch.setattr(builder_service, "create_node", fake_create_node)
     monkeypatch.setattr(builder_service, "list_nodes", fake_list_nodes)
     monkeypatch.setattr(builder_service, "list_relationships", fake_list_relationships)
-    monkeypatch.setattr(builder_service, "save_chunk", fake_save_chunk)
     
     # Mock SSE manager
     mock_sse = AsyncMock()
@@ -159,8 +163,8 @@ async def test_similarity_check_enabled_performs_deduplication(monkeypatch):
     Test that when similarity_check_enabled=True, extracted nodes are
     checked against existing nodes and duplicates are matched (not created).
     """
-    from backend.app.config import Settings
-    from backend.app.services import builder_service
+    from app.config import Settings
+    from app.services import builder_service
     
     # Mock config with similarity check ENABLED
     enabled_settings = Settings(
@@ -193,7 +197,7 @@ async def test_similarity_check_enabled_performs_deduplication(monkeypatch):
     monkeypatch.setattr(builder_service, "generate_embedding", fake_embed)
     
     # Mock similarity check to return a match
-    from backend.app.services.similarity import _MatchCandidate
+    from app.services.similarity import _MatchCandidate
     
     async def fake_query_best_match(session_id: str, embedding, top_k: int):
         # Return high similarity match
@@ -262,13 +266,9 @@ async def test_similarity_check_enabled_performs_deduplication(monkeypatch):
     
     async def fake_list_relationships(*args, **kwargs):
         return []
-    
-    async def fake_save_chunk(*args):
-        pass
-    
+
     monkeypatch.setattr(builder_service, "list_nodes", fake_list_nodes)
     monkeypatch.setattr(builder_service, "list_relationships", fake_list_relationships)
-    monkeypatch.setattr(builder_service, "save_chunk", fake_save_chunk)
     
     # Mock SSE manager
     mock_sse = AsyncMock()
@@ -298,3 +298,102 @@ async def test_similarity_check_enabled_performs_deduplication(monkeypatch):
     # The mock_sse.broadcast would have been called with NodeUpdatedEvent
     assert mock_sse.broadcast.called
 
+
+def _make_rel(rel_id: str, source_id: str, target_id: str) -> Relationship:
+    return Relationship(
+        id=rel_id,
+        source_id=source_id,
+        target_id=target_id,
+        category=RelationshipCategory.ASSOCIATIVE,
+        description="related to",
+        confidence=0.8,
+        evidence="test evidence",
+        source=RelationshipSource.BUILDER,
+        created_at=datetime.now(timezone.utc),
+    )
+
+
+@pytest.mark.asyncio
+async def test_persist_relationships_skips_none_from_missing_nodes(monkeypatch):
+    """create_relationship returns None when an endpoint node is missing;
+    the None must be skipped (T7) — previously it was appended and later
+    crashed RelationshipAddedEvent(payload=None), failing the whole chunk."""
+    from app.services import builder_service
+
+    rel_ok = _make_rel("rel-ok", "node-a", "node-b")
+    rel_missing = _make_rel("rel-missing", "node-a", "node-ghosted")
+
+    async def fake_create_relationship(session_id: str, rel: Relationship):
+        if rel.id == "rel-missing":
+            return None  # endpoint node missing
+        return rel
+
+    monkeypatch.setattr(builder_service, "create_relationship", fake_create_relationship)
+
+    service = BuilderService()
+    persisted = await service._persist_relationships("session-1", [rel_ok, rel_missing])
+
+    assert persisted == [rel_ok], "None results must be skipped, not appended"
+
+    # And broadcasting the persisted list must not construct a None payload.
+    broadcasts = []
+
+    class FakeSSE:
+        async def broadcast(self, session_id: str, event):
+            broadcasts.append(event)
+
+    monkeypatch.setattr(builder_service, "sse_manager", FakeSSE())
+    await service._broadcast_relationships("session-1", persisted)
+
+    assert len(broadcasts) == 1
+    assert isinstance(broadcasts[0], RelationshipAddedEvent)
+    assert broadcasts[0].payload.id == "rel-ok"
+
+
+@pytest.mark.asyncio
+async def test_similarity_below_threshold_creates_new_node(monkeypatch):
+    """A candidate below similarity_threshold must create a new GHOST node,
+    never record a mention (covers the create branch of
+    _check_similarity_and_persist; equivalent coverage previously lived in
+    the removed similarity.run_similarity tests)."""
+    from app.config import Settings
+    from app.services import builder_service
+
+    settings = Settings(
+        similarity_check_enabled=True,
+        similarity_threshold=0.92,
+        neo4j_uri="bolt://localhost:7687",
+        neo4j_username="neo4j",
+        neo4j_password="test",
+        redis_url="redis://localhost:6379",
+    )
+    monkeypatch.setattr(builder_service, "get_settings", lambda: settings)
+
+    async def fake_embed(label: str, language: str = "en"):
+        return [0.1, 0.2, 0.3]
+
+    async def fake_query_best_match(session_id: str, embedding, top_k: int):
+        from app.services.similarity import _MatchCandidate
+        return _MatchCandidate(node_id="node-other", score=0.5)  # below 0.92
+
+    async def fail_record_mention(*args, **kwargs):
+        raise AssertionError("record_node_mention must not run below threshold")
+
+    created_nodes: list[Node] = []
+
+    async def fake_create_node(session_id: str, node: Node) -> Node:
+        created_nodes.append(node)
+        return node
+
+    monkeypatch.setattr(builder_service, "generate_embedding", fake_embed)
+    monkeypatch.setattr(builder_service, "_query_best_match", fake_query_best_match)
+    monkeypatch.setattr(builder_service, "record_node_mention", fail_record_mention)
+    monkeypatch.setattr(builder_service, "create_node", fake_create_node)
+
+    service = BuilderService()
+    node = _make_node("new concept", "node-new")
+    results = await service._check_similarity_and_persist("session-1", [node], 1.0)
+
+    assert len(results) == 1
+    assert results[0].is_match is False
+    assert created_nodes == [node], "below-threshold candidate must create a node"

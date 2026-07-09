@@ -46,14 +46,16 @@ async def get_full_graph(session_id: str = Path(..., description="Session identi
 @router.get("/nodes", response_model=NodesResponse, summary="Get nodes")
 async def get_nodes(
     session_id: str = Path(..., description="Session identifier"),
-    status: StatusFilter = Query("all", description="Filter by node status"),
+    # Bound as `status_filter` so it does not shadow `fastapi.status` (the
+    # error branch below needs the module); the query param stays `?status=`.
+    status_filter: StatusFilter = Query("all", alias="status", description="Filter by node status"),
     flower_id: Optional[str] = Query(None, description="Restrict to a given Flower"),
 ) -> NodesResponse:
     """GET /sessions/{id}/nodes — list nodes (filterable)."""
     node_status: Optional[NodeStatus] = None
-    if status != "all":
+    if status_filter != "all":
         try:
-            node_status = NodeStatus(status)
+            node_status = NodeStatus(status_filter)
         except ValueError:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid status filter")
 
@@ -104,7 +106,7 @@ async def trigger_node_research(
         session_id=session_id,
         node_id=node.id,
         label=node.label,
-        entity_type=str(node.entity_type),
+        entity_type=node.inferred_type or "concept",
         research_reason="user_requested",
         priority="high",
     )

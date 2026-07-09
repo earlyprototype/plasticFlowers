@@ -8,15 +8,22 @@ creating circular dependencies. Values map 1:1 with the Gate 3 plan.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 
 from pydantic import Field, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# Anchor the env file to the repo root (this file is backend/app/config.py)
+# so settings load identically regardless of the current working directory.
+_REPO_ROOT_ENV_FILE = Path(__file__).resolve().parents[2] / ".env"
 
 
 class Settings(BaseSettings):
     """Runtime settings loaded from environment variables or `.env` files."""
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_file=_REPO_ROOT_ENV_FILE, env_file_encoding="utf-8"
+    )
 
     neo4j_uri: str = Field(
         "neo4j://127.0.0.1:7687",
@@ -123,11 +130,15 @@ class Settings(BaseSettings):
         "redis://localhost:6379",
         description="Redis connection URL for event streams.",
     )
-    gardener_debounce_seconds: int = Field(
-        30,
-        ge=5,
-        le=300,
-        description="DEPRECATED: Use builder_gardener_ratio instead. Minimum seconds between Gardener runs.",
+    gardener_debounce_seconds: float = Field(
+        5.0,
+        ge=0.0,
+        le=300.0,
+        description=(
+            "Per-session Gardener coalescing window in seconds: after a run, the next "
+            "run for that session is scheduled no sooner than this many seconds later; "
+            "chunk events arriving inside the window coalesce into that one scheduled run."
+        ),
     )
     builder_gardener_ratio: int = Field(
         5,
@@ -136,18 +147,13 @@ class Settings(BaseSettings):
         description="Number of Builder runs before triggering one Gardener run. E.g., 5 = every 5 chunks processed.",
     )
 
-    # Agent enable flags - allow disabling agents for debugging/testing
-    builder_enabled: bool = Field(
-        True,
-        description="Enable Builder agent processing. Set false to skip extraction.",
-    )
-    gardener_enabled: bool = Field(
-        True,
-        description="Enable Gardener agent scheduling. Set false to skip graph maintenance.",
-    )
     researcher_enabled: bool = Field(
         True,
-        description="Enable Researcher agent for external enrichment (Phase 3).",
+        description=(
+            "Enable automatic Researcher dispatch: the Gardener scheduler checks "
+            "this before publishing research triggers. Manual research via "
+            "POST /sessions/{id}/nodes/{node_id}/research is unaffected."
+        ),
     )
     tavily_api_key: SecretStr = Field(
         SecretStr(""),
@@ -156,10 +162,6 @@ class Settings(BaseSettings):
     tavily_mcp_url: str = Field(
         "https://mcp.tavily.com/mcp/",
         description="Tavily remote MCP server URL.",
-    )
-    librarian_enabled: bool = Field(
-        True,
-        description="Enable Librarian Q&A agent (Phase E).",
     )
     similarity_check_enabled: bool = Field(
         True,

@@ -1,12 +1,14 @@
 # Architectural Advisory: plasticFlower
 
+> **Historical planning document** — describes a target architecture, not the current system; GraphRAG Q&A and the Librarian agent are NOT implemented. See [_docs/_audit/2026-07-08_audit_report.md](./_audit/2026-07-08_audit_report.md) for current state.
+
 **Date:** 30 December 2025  
 **Version:** 8.2 (Event-Driven Agents)  
 **Context:** Complete system design incorporating GraphRAG, Research Augmentation, and STT Correction  
 **Learning Guide:** [LEARNING_GUIDE.md](./LEARNING_GUIDE.md) - Structured curriculum for Neo4j and Semantic Knowledge Graphs  
 **Session State:** [_START_SESSION_STATE.md](./_START_SESSION_STATE.md) - Cross-session progress tracking (attach to every coding session)  
 **ADR Index:** [_dev/ADR/INDEX.md](./_dev/ADR/INDEX.md) - Architecture Decision Records (critical process)  
-**Lite Version:** [LITE_ARCHITECTURE.md](./LITE_ARCHITECTURE.md) - Browser-only implementation for demos (separate project)
+**Lite Version:** [LITE_ARCHITECTURE.md](./_archive/LITE_ARCHITECTURE.md) - Browser-only implementation for demos (separate project)
 
 ---
 

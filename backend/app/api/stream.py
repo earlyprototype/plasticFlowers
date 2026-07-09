@@ -7,7 +7,7 @@ import asyncio
 from fastapi import APIRouter, Path
 from sse_starlette.sse import EventSourceResponse
 
-from ..services import gardener_scheduler, sse_manager
+from ..services import sse_manager
 
 
 router = APIRouter(prefix="/sessions/{session_id}", tags=["stream"])
@@ -18,9 +18,6 @@ async def stream_session(session_id: str = Path(..., description="Session identi
     """GET /sessions/{id}/stream — SSE event subscription."""
 
     queue = await sse_manager.subscribe(session_id)
-    
-    # Track active session (for monitoring/debugging - Gardener is Redis-triggered)
-    gardener_scheduler.mark_activity(session_id)
 
     async def event_generator():
         try:

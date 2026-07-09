@@ -109,6 +109,18 @@ class ResearcherAgent:
                 session_id, node_id, node_label, entity_type, search_query
             )
             provider_used = SearchProvider.GEMINI
+        except Exception:
+            # Programming/contract errors (e.g. a bad kwarg -> TypeError) must
+            # not bypass the fallback: log loudly, then degrade to Gemini.
+            # A Gemini failure here still raises ResearcherAgentError.
+            logger.exception(
+                "Tavily research raised unexpectedly for '%s'; falling back to Gemini",
+                node_label,
+            )
+            reference = await self._research_with_gemini(
+                session_id, node_id, node_label, entity_type, search_query
+            )
+            provider_used = SearchProvider.GEMINI
         
         duration_ms = (perf_counter() - t0) * 1000
         logger.info(

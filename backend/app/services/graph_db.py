@@ -194,8 +194,10 @@ async def list_nodes(
         if status:
             where_clauses.append("n.status = $status")
             params["status"] = status.value if isinstance(status, NodeStatus) else status
-        
-        where_sql = f"AND {' AND '.join(where_clauses)}" if where_clauses else ""
+
+        # Extra filters need a WHERE clause — a bare "AND" after the MATCH
+        # is invalid Cypher (500s the endpoint when both filters are set).
+        where_sql = f"WHERE {' AND '.join(where_clauses)}" if where_clauses else ""
         params["flower_id"] = flower_id
         query = f"""
         MATCH (n:Node {{session_id: $session_id}})-[:BELONGS_TO]->(f:Flower {{id: $flower_id}})
@@ -411,30 +413,63 @@ async def list_relationships(
 
 
 async def upsert_flower(session_id: str, flower: Flower) -> Flower:
-    """Create or update a Flower node."""
+    """Create or update a Flower node, reconciling membership atomically.
+
+    ``flower.member_ids`` is the authoritative member list: in ONE transaction
+    the Flower is MERGEd, BELONGS_TO edges of nodes no longer in the list are
+    detached, edges for listed nodes are attached (session-scoped, replacing
+    any membership in another Flower), and the Flower is returned with its
+    member_ids re-derived from the reconciled edges. Readers never observe a
+    partially-updated membership.
+    """
 
     driver = await get_driver()
     flower_props = _flower_to_properties(flower, session_id)
-    query = """
+    member_ids = [mid for mid in (flower.member_ids or []) if mid]
+
+    upsert_query = """
     MERGE (f:Flower {id: $flower_id, session_id: $session_id})
     SET f = $flower
-    RETURN f AS flower
+    """
+    detach_query = """
+    MATCH (old:Node)-[stale:BELONGS_TO]->(f:Flower {id: $flower_id, session_id: $session_id})
+    WHERE NOT old.id IN $member_ids
+    DELETE stale
+    """
+    attach_query = """
+    MATCH (f:Flower {id: $flower_id, session_id: $session_id})
+    UNWIND $member_ids AS member_id
+    MATCH (n:Node {id: member_id, session_id: $session_id})
+    OPTIONAL MATCH (n)-[previous:BELONGS_TO]->(other:Flower)
+    WHERE other.id <> $flower_id
+    DELETE previous
+    MERGE (n)-[:BELONGS_TO]->(f)
+    """
+    return_query = """
+    MATCH (f:Flower {id: $flower_id, session_id: $session_id})
+    OPTIONAL MATCH (n:Node)-[:BELONGS_TO]->(f)
+    RETURN f AS flower, collect(n.id) AS member_ids
     """
     params = {
         "flower_id": flower.id,
         "session_id": session_id,
         "flower": flower_props,
+        "member_ids": member_ids,
     }
 
     async with driver.session() as session:
-        async def _work(tx, cypher: str, parameters: Dict[str, Any]) -> Flower:
-            result = await tx.run(cypher, **parameters)
+        async def _work(tx, parameters: Dict[str, Any]) -> Flower:
+            await (await tx.run(upsert_query, **parameters)).consume()
+            await (await tx.run(detach_query, **parameters)).consume()
+            if parameters["member_ids"]:
+                await (await tx.run(attach_query, **parameters)).consume()
+            result = await tx.run(return_query, **parameters)
             record = await result.single()
             if record is None:
                 raise RuntimeError("Neo4j did not return upserted Flower")
-            return _flower_from_value(record["flower"])
+            return _flower_from_value(record["flower"], member_ids=record.get("member_ids"))
 
-        return await session.execute_write(_work, query, params)
+        return await session.execute_write(_work, params)
 
 
 async def delete_flower(session_id: str, flower_id: str) -> None:
@@ -470,7 +505,8 @@ async def list_flowers(session_id: str) -> List[Flower]:
     driver = await get_driver()
     query = """
     MATCH (f:Flower {session_id: $session_id})
-    RETURN f AS flower
+    OPTIONAL MATCH (n:Node)-[:BELONGS_TO]->(f)
+    RETURN f AS flower, collect(n.id) AS member_ids
     ORDER BY f.created_at
     """
 
@@ -479,7 +515,7 @@ async def list_flowers(session_id: str) -> List[Flower]:
             result = await tx.run(cypher, **parameters)
             flowers: List[Flower] = []
             async for record in result:
-                flowers.append(_flower_from_value(record["flower"]))
+                flowers.append(_flower_from_value(record["flower"], member_ids=record.get("member_ids")))
             return flowers
 
         return await session.execute_read(_work, query, {"session_id": session_id})
@@ -513,6 +549,10 @@ def _relationship_to_properties(relationship: Relationship, session_id: str) -> 
 
 def _flower_to_properties(flower: Flower, session_id: str) -> Dict[str, Any]:
     data = flower.model_dump()
+    # Single source of truth: membership lives in BELONGS_TO relationships
+    # (written via set_node_flower). member_ids is derived on read
+    # (list_flowers/upsert_flower collect them), never stored as a property.
+    data.pop("member_ids", None)
     data[SESSION_KEY] = session_id
     return data
 
@@ -534,10 +574,13 @@ def _relationship_from_value(value: Neo4jRelationship) -> Relationship:
     return Relationship.model_validate(props)
 
 
-def _flower_from_value(value: Neo4jNode) -> Flower:
+def _flower_from_value(value: Neo4jNode, member_ids: Optional[List[str]] = None) -> Flower:
     props = dict(value)
     props.pop(SESSION_KEY, None)
     props["created_at"] = _convert_datetime(props.get("created_at"))
+    # Membership is derived from BELONGS_TO relationships at query time
+    # (see _flower_to_properties) — inject what the caller collected.
+    props["member_ids"] = [mid for mid in (member_ids or []) if mid]
     return Flower.model_validate(props)
 
 
@@ -660,16 +703,38 @@ async def update_session_record(
 
 
 async def delete_session_record(session_id: str) -> None:
-    """Delete a Session and all associated data (nodes, relationships, flowers, chunks)."""
+    """Delete a Session and ALL associated data.
+
+    Covers nodes, relationships, flowers, chunks plus the session-scoped
+    side-car nodes (Reference, SessionVocabulary, ProofreadCheckpoint,
+    SessionContext) and any Source nodes left without citations — these were
+    previously orphaned on delete.
+    """
 
     driver = await get_driver()
 
-    # Delete in order: relationships first, then nodes, flowers, chunks, session
+    # Collected before the session's References are deleted: only Sources this
+    # session actually cited can become orphaned by this delete, so the orphan
+    # sweep below is scoped to this url set instead of scanning every Source.
+    collect_cited_urls_query = """
+    MATCH (ref:Reference {session_id: $session_id})-[:CITED_BY]->(src:Source)
+    RETURN collect(DISTINCT src.url) AS urls
+    """
+
+    # Delete in order: relationships first, then references (linked via the
+    # session's nodes / carrying session_id), nodes, flowers, chunks,
+    # session-scoped side-cars, orphaned sources, and finally the session.
     queries = [
         # Delete relationships for session
         """
         MATCH ()-[r:RELATIONSHIP {session_id: $session_id}]->()
         DELETE r
+        """,
+        # Delete Reference nodes for session (carry session_id; DETACH also
+        # removes HAS_REFERENCE / CITED_BY edges)
+        """
+        MATCH (ref:Reference {session_id: $session_id})
+        DETACH DELETE ref
         """,
         # Delete nodes for session
         """
@@ -679,23 +744,58 @@ async def delete_session_record(session_id: str) -> None:
         # Delete flowers for session
         """
         MATCH (f:Flower {session_id: $session_id})
-        DELETE f
+        DETACH DELETE f
         """,
         # Delete chunks for session
         """
         MATCH (c:TranscriptChunk {session_id: $session_id})
-        DELETE c
+        DETACH DELETE c
+        """,
+        # Delete session vocabulary
+        """
+        MATCH (v:SessionVocabulary {session_id: $session_id})
+        DETACH DELETE v
+        """,
+        # Delete proofread checkpoint
+        """
+        MATCH (p:ProofreadCheckpoint {session_id: $session_id})
+        DETACH DELETE p
+        """,
+        # Delete session context
+        """
+        MATCH (sc:SessionContext {session_id: $session_id})
+        DETACH DELETE sc
+        """,
+        # Delete Source nodes this session cited that no longer have any
+        # citations. Sources are MERGEd globally by url (shared across
+        # sessions), so the check is anchored to the urls collected above
+        # instead of scanning the whole Source label.
+        """
+        MATCH (src:Source)
+        WHERE src.url IN $cited_urls
+          AND NOT (src)<-[:CITED_BY]-()
+        DETACH DELETE src
         """,
         # Delete session itself
         """
         MATCH (s:Session {id: $session_id})
-        DELETE s
+        DETACH DELETE s
         """,
     ]
 
     async with driver.session() as session:
         async def _work(tx, cypher_list: List[str], parameters: Dict[str, Any]) -> None:
+            # Snapshot the session's cited Source urls first (the References
+            # are gone by the time the orphan sweep runs).
+            result = await tx.run(collect_cited_urls_query, **parameters)
+            record = await result.single()
+            cited_urls = list(record["urls"]) if record and record["urls"] else []
+
+            parameters = {**parameters, "cited_urls": cited_urls}
             for cypher in cypher_list:
+                if "$cited_urls" in cypher and not cited_urls:
+                    # Nothing cited -> nothing can be orphaned; skip the sweep.
+                    continue
                 result = await tx.run(cypher, **parameters)
                 await result.consume()
 
@@ -1254,7 +1354,10 @@ async def create_reference(session_id: str, reference: ReferenceNode) -> Referen
     # Serialize complex types
     props = reference.model_dump(exclude={"sources"})
 
-    
+    # Neo4j rejects map-typed properties: store vocabulary_suggestion as a
+    # JSON string (parsed back in _reference_from_value).
+    props["vocabulary_suggestion"] = json.dumps(props.get("vocabulary_suggestion") or {})
+
     # Convert enums to strings
     if "entity_type" in props:
         props["entity_type"] = props["entity_type"].value
@@ -1270,14 +1373,15 @@ async def create_reference(session_id: str, reference: ReferenceNode) -> Referen
     WITH r
     UNWIND $sources AS source_data
     MERGE (s:Source {url: source_data.url})
-    ON CREATE SET s.title = source_data.title, s.content = source_data.content
+    ON CREATE SET s.title = source_data.title, s.snippet = source_data.snippet, s.source_type = source_data.source_type
     MERGE (r)-[:CITED_BY]->(s)
     
     RETURN r
     """
     
-    # Prepare sources list for UNWIND
-    sources_data = [s.model_dump() for s in reference.sources]
+    # Prepare sources list for UNWIND (mode="json" turns the source_type
+    # enum into a string, which Neo4j accepts as a property)
+    sources_data = [s.model_dump(mode="json") for s in reference.sources]
     
     async with driver.session() as session:
         async def _work(tx, cypher: str, params: Dict[str, Any]) -> ReferenceNode:
@@ -1333,24 +1437,39 @@ async def get_reference(session_id: str, node_id: str) -> Optional[ReferenceNode
 def _reference_from_value(node: Neo4jNode, sources: List[Neo4jNode] = None) -> ReferenceNode:
     """Convert Neo4j node to ReferenceNode model."""
     props = dict(node)
-    
-    # Phase 5.2 Migration Support
-    # If "sources_json" exists (legacy), use it.
-    # If `sources` arg is provided (new), use it.
-    
+
+    # vocabulary_suggestion is stored as a JSON string (Neo4j rejects maps) -
+    # parse it back into a dict on read.
+    raw_vocab = props.get("vocabulary_suggestion")
+    if isinstance(raw_vocab, str):
+        try:
+            parsed_vocab = json.loads(raw_vocab)
+        except json.JSONDecodeError:
+            parsed_vocab = {}
+        props["vocabulary_suggestion"] = parsed_vocab if isinstance(parsed_vocab, dict) else {}
+
+    # Neo4j returns temporal properties as neo4j.time.DateTime - convert back
+    # to a native datetime for the Pydantic model.
+    props["fetched_at"] = _convert_datetime(props.get("fetched_at"))
+
     from ..models import ReferenceSource
 
     source_objects = []
-    
-    
+
     # Strictly use new Graph Schema (Phase 5.2+)
     if sources:
         for s in sources:
             s_props = dict(s)
-            source_objects.append(ReferenceSource(**s_props))
-            
+            source_objects.append(ReferenceSource(
+                title=s_props.get("title", ""),
+                url=s_props.get("url", ""),
+                # Older Source nodes stored the excerpt as `content`
+                snippet=(s_props.get("snippet") or s_props.get("content") or "")[:500],
+                source_type=s_props.get("source_type", "other"),
+            ))
+
     props["sources"] = source_objects
-    
+
     return ReferenceNode(**props)
 
 

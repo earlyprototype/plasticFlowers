@@ -49,12 +49,7 @@ from .builder_service import (
     get_builder_service,
 )
 from .sse_manager import SSEManager, sse_manager
-from .similarity import (
-    run_similarity,
-    SimilarityResult,
-    SimilarityMatchResult,
-    SimilarityCreateResult,
-)
+from .similarity import types_compatible
 from .redis_streams import (
     # Connection
     get_redis,
@@ -62,14 +57,12 @@ from .redis_streams import (
     redis_health_check,
     # Publishing
     publish_chunk_added,
-    publish_gardener_complete,
     publish_node_needs_research,
     # Consuming
     consume_events,
     ack_event,
     # Stream names
     STREAM_CHUNKS_ADDED,
-    STREAM_GARDENER_COMPLETE,
     GROUP_GARDENER,
 )
 
@@ -102,10 +95,7 @@ __all__ = [
     "delete_flower",
     "list_flowers",
     "fetch_graph_state",
-    "run_similarity",
-    "SimilarityResult",
-    "SimilarityMatchResult",
-    "SimilarityCreateResult",
+    "types_compatible",
     "gardener_scheduler",
     "GardenerScheduler",
     # Builder service
@@ -131,13 +121,10 @@ __all__ = [
     "close_redis",
     "redis_health_check",
     "publish_chunk_added",
-    "publish_gardener_complete",
     "publish_node_needs_research",
     "consume_events",
     "ack_event",
     "STREAM_CHUNKS_ADDED",
-    "STREAM_GARDENER_COMPLETE",
-    "GROUP_GARDENER",
     "GROUP_GARDENER",
     "ResearcherService",
     "researcher_service",

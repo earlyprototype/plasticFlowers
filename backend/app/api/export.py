@@ -7,14 +7,12 @@ Spec references:
 
 from __future__ import annotations
 
-import asyncio
 import logging
 from datetime import datetime, timezone
 from typing import List
 
 from fastapi import APIRouter, HTTPException, Path, status
 from fastapi.responses import PlainTextResponse
-from google import genai
 from google.genai import types
 
 from ..models import (
@@ -243,42 +241,15 @@ async def _generate_fake_summary(session_id: str, session_name: str) -> str:
 
 
 async def _generate_text(prompt: str, model: str, temperature: float = 0.7) -> str:
-    """Generate plain text response from Gemini."""
-    from ..config import get_settings
-    
-    settings = get_settings()
-    
-    # Call synchronous generation in thread pool
-    loop = asyncio.get_event_loop()
-    result = await loop.run_in_executor(
-        None,
-        _generate_text_sync,
-        prompt,
-        model,
-        temperature,
-        settings,
-    )
-    return result
+    """Generate plain text response from Gemini.
 
+    Reuses the shared singleton client from services/llm.py instead of
+    constructing a fresh genai.Client per export.
+    """
+    from ..services.llm import get_gemini_client
 
-def _generate_text_sync(prompt: str, model: str, temperature: float, settings) -> str:
-    """Synchronous text generation."""
-    
-    api_key = settings.gemini_api_key.get_secret_value()
-    if not api_key:
-         raise RuntimeError("GEMINI_API_KEY is not configured")
-
-    if settings.vertex_project_id:
-        client = genai.Client(
-            vertexai=True,
-            project=settings.vertex_project_id,
-            location=settings.vertex_location,
-            api_key=api_key
-        )
-    else:
-        client = genai.Client(api_key=api_key)
-    
-    response = client.models.generate_content(
+    client = get_gemini_client()
+    response = await client.aio.models.generate_content(
         model=model,
         contents=prompt,
         config=types.GenerateContentConfig(
@@ -286,7 +257,6 @@ def _generate_text_sync(prompt: str, model: str, temperature: float, settings) -
             max_output_tokens=1024,
         ),
     )
-    
     return response.text
 
 
@@ -349,10 +319,12 @@ Keep it concise (200-300 words). Use markdown formatting.
 """
     
     try:
-        # Use Gemini 3 Flash Preview for cost-effective summarisation
+        # Use the configured default Gemini model for summarisation
+        from ..config import get_settings
+
         response = await _generate_text(
             prompt=prompt,
-            model="gemini-2.5-flash",
+            model=get_settings().gemini_model,
             temperature=0.7,  # Slightly creative for better summaries
         )
         

@@ -42,6 +42,7 @@ export interface Flower {
   label: string;
   stem_node_id: string;
   edge_count: number;
+  member_ids: string[]; // Node ids belonging to this flower (may be empty on a fresh flower)
   created_at: string;
 }
 
@@ -148,6 +149,14 @@ export interface NodeMergedPayload {
   into_id: string;
 }
 
+// Mirrors backend/app/models/events.py NodeCorrectedPayload (STT label corrections)
+export interface NodeCorrectedPayload {
+  node_id: string;
+  old_label: string;
+  new_label: string;
+  confidence: number; // 0.0-1.0
+}
+
 export interface RelationshipRemovedPayload {
   id: string;
 }
@@ -158,6 +167,12 @@ export interface FlowerDissolvedPayload {
 
 export interface GardenerCyclePayload {
   timestamp: string;
+}
+
+// Emitted when the server's bounded per-client event queue overflowed and
+// dropped events — the client's graph state is incomplete and must refetch.
+export interface ResyncRequiredPayload {
+  reason: string; // e.g. "event_overflow"
 }
 
 export type NodeAddedEvent = {
@@ -178,6 +193,11 @@ export type NodeRemovedEvent = {
 export type NodeMergedEvent = {
   type: "node_merged";
   payload: NodeMergedPayload;
+};
+
+export type NodeCorrectedEvent = {
+  type: "node_corrected";
+  payload: NodeCorrectedPayload;
 };
 
 export type RelationshipAddedEvent = {
@@ -220,11 +240,17 @@ export type HeartbeatEvent = {
   payload: string;
 };
 
+export type ResyncRequiredEvent = {
+  type: "resync_required";
+  payload: ResyncRequiredPayload;
+};
+
 export type SSEvent =
   | NodeAddedEvent
   | NodeUpdatedEvent
   | NodeRemovedEvent
   | NodeMergedEvent
+  | NodeCorrectedEvent
   | RelationshipAddedEvent
   | RelationshipRemovedEvent
   | FlowerCreatedEvent
@@ -233,7 +259,8 @@ export type SSEvent =
   | ChunkProcessedEvent
   | GardenerCycleEvent
   | HeartbeatEvent
-  | ReferenceAddedEvent;
+  | ReferenceAddedEvent
+  | ResyncRequiredEvent;
 
 export interface ReferenceSource {
   title: string;

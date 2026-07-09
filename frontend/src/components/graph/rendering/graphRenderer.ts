@@ -34,7 +34,6 @@ export function syncGraphStructure(
   };
   
   // Build lookup sets
-  const flowerMap = new Map(data.flowers.map((f) => [f.id, f]));
   const stemLookup = new Set(data.flowers.map((f) => f.stem_node_id).filter(Boolean));
   
   // 1. Sync flowers (compound nodes)
@@ -153,8 +152,12 @@ function syncNodes(
       existing.data(elementData);
       existing.classes(classes.join(' '));
       
-      // Move to new parent if needed
-      if ((existing.parent() as any)?.id() !== parentId) {
+      // Move to new parent if needed.
+      // Normalize both sides to null: `.parent().first().id()` is undefined for
+      // parentless nodes, and `undefined !== null` would move() (remove+re-add)
+      // every unclustered node on every sync.
+      const currentParentId = existing.parent().first().id() ?? null;
+      if (currentParentId !== parentId) {
         existing.move({ parent: parentId });
       }
       
@@ -197,12 +200,13 @@ function syncEdges(
     const sourceNode = cy.getElementById(relationship.source_id);
     const targetNode = cy.getElementById(relationship.target_id);
     
-    const sourceParent = sourceNode.parent();
-    const targetParent = targetNode.parent();
-    
-    const isInterFlower = 
-      sourceParent.nonempty() && 
-      targetParent.nonempty() && 
+    // .parent() returns a NodeCollection; take the first (only) element for singular ops
+    const sourceParent = sourceNode.parent().first();
+    const targetParent = targetNode.parent().first();
+
+    const isInterFlower =
+      sourceParent.nonempty() &&
+      targetParent.nonempty() &&
       sourceParent.id() !== targetParent.id() &&
       sourceParent.hasClass('flower') &&
       targetParent.hasClass('flower');
@@ -221,10 +225,11 @@ function syncEdges(
     
     const existing = cy.getElementById(relationship.id);
     if (existing && existing.nonempty()) {
-      // Update existing edge
+      // Update existing edge in place. Edge updates are intentionally not
+      // recorded in the SyncResult: updatedNodeIds is a node/flower set and
+      // no consumer needs updated-edge ids.
       existing.data(elementData);
       existing.classes(classes.join(' '));
-      result.updatedNodeIds.add(relationship.id);
     } else {
       // Create new edge
       cy.add({

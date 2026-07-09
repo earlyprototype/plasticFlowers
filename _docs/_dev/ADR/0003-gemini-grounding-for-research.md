@@ -65,7 +65,7 @@ Fallback: Tavily API (if grounding fails or for specific use cases)
 ## Related
 
 - `@_docs/ARCHITECTURE_ADVISORY.md` - Section 3.3: Researcher
-- `@_docs/LITE_ARCHITECTURE.md` - Section 6: Research
+- `@_docs/_archive/LITE_ARCHITECTURE.md` - Section 6: Research
 - Gemini grounding docs: https://ai.google.dev/gemini-api/docs/grounding
 
 ## Notes

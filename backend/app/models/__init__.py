@@ -18,6 +18,8 @@ from .events import (
     RelationshipRemovedEvent,
     ReferenceAddedEvent,
     ReferenceAddedPayload,
+    ResyncRequiredEvent,
+    ResyncRequiredPayload,
 )
 from .flower import Flower, FlowerBridge
 from .graph import FlowersResponse, GraphState, GraphStateResponse, NodesResponse, ReferencesResponse, RelationshipsResponse
@@ -66,7 +68,6 @@ __all__ = [
     "FlowersResponse",
     "Node",
     "SessionExportBundle",
-    "SessionExportBundle",
     "NodeAddedEvent",
     "NodeCorrectedEvent",
     "NodeCorrectedPayload",
@@ -82,6 +83,8 @@ __all__ = [
     "RelationshipSource",
     "ReferenceAddedEvent",
     "ReferenceAddedPayload",
+    "ResyncRequiredEvent",
+    "ResyncRequiredPayload",
     "SessionCreateRequest",
     "SessionCreateResponse",
     "SessionDetail",

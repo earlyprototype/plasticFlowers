@@ -1,13 +1,29 @@
 """PlasticFlower backend FastAPI application."""
 
-# Force IPv4 to avoid Windows IPv6 fallback delays (~21s per connection)
-import socket
-_original_getaddrinfo = socket.getaddrinfo
-def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
-    return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
-socket.getaddrinfo = _ipv4_only_getaddrinfo
-
+import os
 import sys
+
+# Windows workaround: force IPv4 to avoid IPv6 fallback delays (~21s per
+# connection). Defaults ON on Windows; set PLASTICFLOWER_FORCE_IPV4=0 (or
+# false/no/off) to opt out there. On every other platform it stays opt-in
+# via PLASTICFLOWER_FORCE_IPV4=1.
+_force_ipv4 = os.getenv("PLASTICFLOWER_FORCE_IPV4", "").strip().lower()
+if _force_ipv4 in {"1", "true", "yes", "on"} or (
+    sys.platform == "win32" and _force_ipv4 not in {"0", "false", "no", "off"}
+):
+    import socket
+
+    # Guard: only patch once, even if this block runs again in-process
+    # (e.g. alongside scripts/smoke_test.py, which mirrors this patch).
+    if not getattr(socket.getaddrinfo, "_plasticflower_ipv4_only", False):
+        _original_getaddrinfo = socket.getaddrinfo
+
+        def _ipv4_only_getaddrinfo(host, port, family=0, type=0, proto=0, flags=0):
+            return _original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+        _ipv4_only_getaddrinfo._plasticflower_ipv4_only = True
+        socket.getaddrinfo = _ipv4_only_getaddrinfo
+
 import asyncio
 
 if sys.platform == "win32":
@@ -15,10 +31,10 @@ if sys.platform == "win32":
 
 from contextlib import asynccontextmanager
 import logging
-import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .api import api_router
 from .services import (
@@ -79,7 +95,7 @@ app = FastAPI(title="plasticFlower API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -87,11 +103,31 @@ app.add_middleware(
 
 
 @app.get("/health", tags=["system"])
-async def read_health() -> dict[str, str]:
-    """Readiness probe that verifies Neo4j connectivity."""
+async def read_health():
+    """Readiness probe that verifies Neo4j connectivity.
 
-    await run_healthcheck()
-    return {"status": "ok"}
+    Returns a structured degraded response (503) instead of letting Neo4j
+    exceptions propagate as raw 500s. Under PLASTICFLOWER_SKIP_NEO4J the
+    Neo4j check is skipped entirely and reported as such.
+    """
+
+    if _SKIP_NEO4J:
+        return {"status": "ok", "neo4j": "skipped"}
+
+    try:
+        await run_healthcheck()
+    except Exception as exc:
+        logger.warning("health.neo4j_check_failed error=%s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "degraded",
+                "neo4j": "unavailable",
+                "detail": str(exc),
+            },
+        )
+
+    return {"status": "ok", "neo4j": "ok"}
 
 
 # Gate 2 routers -------------------------------------------------------------

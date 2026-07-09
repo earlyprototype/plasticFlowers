@@ -65,7 +65,7 @@ I'm working on plasticFlower Lite (browser-only version).
 
 Context files:
 - @_docs/_START_SESSION_STATE.md (progress)
-- @_docs/LITE_ARCHITECTURE.md (Lite design)
+- @_docs/_archive/LITE_ARCHITECTURE.md (Lite design)
 
 [Describe what you want to work on]
 ```
@@ -634,7 +634,7 @@ Week 3: Phase E + G (Q&A + research)
 |------|---------|--------------|
 | `_START_SESSION_STATE.md` | This file - progress tracking | **Every session** |
 | `ARCHITECTURE_ADVISORY.md` | Full stack system design | Architecture questions |
-| `LITE_ARCHITECTURE.md` | Browser-only POC design | Lite version work |
+| `_archive/LITE_ARCHITECTURE.md` | Browser-only POC design | Lite version work |
 | `LEARNING_GUIDE.md` | Curriculum details | Working on specific phase |
 
 ### Development Aids (Load When Coding)

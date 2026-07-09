@@ -12,7 +12,7 @@ This guide is designed for **LLM-assisted development** with **cross-session per
 
 ### The Session State System
 
-A single file tracks everything across coding sessions: **[SESSION_STATE.md](./SESSION_STATE.md)**
+A single file tracks everything across coding sessions: **[_START_SESSION_STATE.md](./_START_SESSION_STATE.md)**
 
 This file:
 - Persists your progress when conversations end
@@ -24,7 +24,7 @@ This file:
 
 **Step 1:** Attach these files to your conversation:
 ```
-@SESSION_STATE.md
+@_START_SESSION_STATE.md
 @LEARNING_GUIDE.md  (optional - for phase details)
 @ARCHITECTURE_ADVISORY.md  (optional - for design questions)
 ```
@@ -38,11 +38,11 @@ or
 "I have 2 hours, what can I accomplish?"
 ```
 
-The LLM will read SESSION_STATE.md and know exactly where you are.
+The LLM will read _START_SESSION_STATE.md and know exactly where you are.
 
 ### Ending Any Coding Session
 
-Say: **"Update SESSION_STATE.md with today's progress"**
+Say: **"Update _START_SESSION_STATE.md with today's progress"**
 
 The LLM will:
 - Check off completed items
@@ -54,18 +54,18 @@ The LLM will:
 
 | Say This | Get This |
 |----------|----------|
-| "Where was I?" | Reads SESSION_STATE.md, tells you next step |
+| "Where was I?" | Reads _START_SESSION_STATE.md, tells you next step |
 | "Phase [X] status" | Progress check against deliverables |
 | "Explain [concept]" | ELI5 explanation with examples |
 | "Exercise [X.Y] help" | Guided walkthrough |
 | "Review my code" | Check against requirements |
 | "What's next?" | Next logical task from your progress |
-| "Update progress" | Updates SESSION_STATE.md |
-| "I'm stuck" | Adds blocker to SESSION_STATE.md, helps debug |
+| "Update progress" | Updates _START_SESSION_STATE.md |
+| "I'm stuck" | Adds blocker to _START_SESSION_STATE.md, helps debug |
 
 ### ADHD-Friendly Tips
 
-1. **Always start by attaching SESSION_STATE.md** - It's your external memory
+1. **Always start by attaching _START_SESSION_STATE.md** - It's your external memory
 2. **One exercise at a time** - Don't look ahead
 3. **Time-box sessions** - "I have 90 minutes" helps scope work
 4. **End sessions cleanly** - Update the state file before stopping

@@ -5,8 +5,8 @@ from types import SimpleNamespace
 import pytest
 from pydantic import SecretStr
 
-from backend.app.services import llm
-from backend.app.services import llm_utils
+from app.services import llm
+from app.services import llm_utils
 
 
 class DummySettings:

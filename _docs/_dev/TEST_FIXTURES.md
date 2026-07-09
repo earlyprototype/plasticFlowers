@@ -9,7 +9,7 @@
 
 ### Transcript 1: ML Lecture (8 chunks, ~4 minutes)
 
-**Source:** `backend/demo_10min.py`  
+**Source:** `backend/scripts/diagnostics/demo_10min.py`  
 **Use case:** General extraction testing, Gardener merge/cluster
 
 ```json

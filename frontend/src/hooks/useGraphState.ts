@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { getGraphState, getReferences } from "../lib/api";
+import { debugLog } from "../lib/debug";
 import type {
   Flower,
   GraphStateResponse,
@@ -12,22 +13,118 @@ import type {
 
 import { useSSE } from "./useSSE";
 
-type Maps = {
+export type GraphMaps = {
   nodes: Map<string, Node>;
   relationships: Map<string, Relationship>;
   flowers: Map<string, Flower>;
   references: Map<string, ReferenceNode>;
 };
 
-const createEmptyMaps = (): Maps => ({
+export const createEmptyMaps = (): GraphMaps => ({
   nodes: new Map(),
   relationships: new Map(),
   flowers: new Map(),
   references: new Map(),
 });
 
+/**
+ * Pure reducer applying a single SSE event to the graph maps.
+ * Returns `prev` unchanged when the event does not affect the maps.
+ * The missing-payload check is a silent no-op kept for direct (non-SSE)
+ * callers and the pure-reducer tests; at runtime useSSE already filters
+ * events with empty payloads before they reach consumers.
+ */
+export function applyEventToMaps(prev: GraphMaps, event: SSEvent): GraphMaps {
+  if ((event as { payload?: unknown }).payload == null) {
+    return prev;
+  }
+  switch (event.type) {
+    case "node_added":
+    case "node_updated": {
+      const nodes = new Map(prev.nodes);
+      nodes.set(event.payload.id, event.payload);
+      return { ...prev, nodes };
+    }
+    case "node_removed": {
+      const nodes = new Map(prev.nodes);
+      nodes.delete(event.payload.id);
+      return { ...prev, nodes };
+    }
+    case "node_merged": {
+      const nodes = new Map(prev.nodes);
+      nodes.delete(event.payload.from_id);
+      return { ...prev, nodes };
+    }
+    case "node_corrected": {
+      const existing = prev.nodes.get(event.payload.node_id);
+      if (!existing) return prev;
+      const nodes = new Map(prev.nodes);
+      nodes.set(event.payload.node_id, { ...existing, label: event.payload.new_label });
+      return { ...prev, nodes };
+    }
+    case "relationship_added": {
+      const relationships = new Map(prev.relationships);
+      relationships.set(event.payload.id, event.payload);
+      return { ...prev, relationships };
+    }
+    case "relationship_removed": {
+      const relationships = new Map(prev.relationships);
+      relationships.delete(event.payload.id);
+      return { ...prev, relationships };
+    }
+    case "flower_created":
+    case "flower_updated": {
+      const flowers = new Map(prev.flowers);
+      flowers.set(event.payload.id, event.payload);
+      return { ...prev, flowers };
+    }
+    case "flower_dissolved": {
+      const flowers = new Map(prev.flowers);
+      flowers.delete(event.payload.id);
+      return { ...prev, flowers };
+    }
+    case "reference_added": {
+      const references = new Map(prev.references);
+      // Key by node_id for easy lookup
+      references.set(event.payload.node_id, event.payload);
+      return { ...prev, references };
+    }
+    default:
+      return prev;
+  }
+}
+
+const RESYNC_DEBOUNCE_MS = 500;
+
+/**
+ * Coalesces a burst of resync requests into a single refetch: the first
+ * `request()` arms a timer that invokes `refetch` after `delayMs`; further
+ * requests while the timer is armed are ignored. `cancel()` drops a pending
+ * refetch (unmount cleanup).
+ */
+export function createResyncScheduler(refetch: () => void, delayMs: number = RESYNC_DEBOUNCE_MS) {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  return {
+    request(): void {
+      if (timer !== null) return;
+      timer = setTimeout(() => {
+        timer = null;
+        refetch();
+      }, delayMs);
+    },
+    cancel(): void {
+      if (timer !== null) {
+        clearTimeout(timer);
+        timer = null;
+      }
+    },
+  };
+}
+
+export type ResyncScheduler = ReturnType<typeof createResyncScheduler>;
+
 export function useGraphState(sessionId: string | null | undefined) {
-  const [maps, setMaps] = useState<Maps>(() => createEmptyMaps());
+  const [maps, setMaps] = useState<GraphMaps>(() => createEmptyMaps());
   const [graphError, setGraphError] = useState<string | null>(null);
   const [lastChunkError, setLastChunkError] = useState<string | null>(null);
 
@@ -66,6 +163,22 @@ export function useGraphState(sessionId: string | null | undefined) {
     }
   }, [sessionId]);
 
+  // The resync scheduler is created once, so it reaches the latest
+  // refreshGraph (which changes with sessionId) through a ref.
+  const refreshGraphRef = useRef(refreshGraph);
+  useEffect(() => {
+    refreshGraphRef.current = refreshGraph;
+  }, [refreshGraph]);
+
+  const resyncSchedulerRef = useRef<ResyncScheduler | null>(null);
+  if (resyncSchedulerRef.current === null) {
+    resyncSchedulerRef.current = createResyncScheduler(() => void refreshGraphRef.current());
+  }
+  useEffect(() => {
+    const scheduler = resyncSchedulerRef.current;
+    return () => scheduler?.cancel();
+  }, []);
+
   useEffect(() => {
     if (!sessionId) {
       setMaps(createEmptyMaps());
@@ -78,71 +191,29 @@ export function useGraphState(sessionId: string | null | undefined) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [sessionId]);
 
-  const handleEvent = useCallback(
-    (event: SSEvent) => {
-      console.log("[SSE] Received:", event.type, event.payload);
-      // Handle counters outside the map update to keep logic clean
-      if (event.type === "chunk_processed") {
-        setBuilderCount((c) => c + 1);
-        setLastChunkError(event.payload.error ?? null);
-      } else if (event.type === "gardener_cycle") {
-        setGardenerCount((c) => c + 1);
-      } else if (event.type === "reference_added") {
-        setResearcherCount((c) => c + 1);
-        setMaps((prev) => {
-          const references = new Map(prev.references);
-          // Key by node_id for easy lookup
-          references.set(event.payload.node_id, event.payload);
-          return { ...prev, references };
-        });
-      }
+  const handleEvent = useCallback((event: SSEvent) => {
+    debugLog("[SSE] Received:", event.type, event.payload);
 
-      setMaps((prev) => {
-        switch (event.type) {
-          case "node_added":
-          case "node_updated": {
-            const nodes = new Map(prev.nodes);
-            nodes.set(event.payload.id, event.payload);
-            return { ...prev, nodes };
-          }
-          case "node_removed": {
-            const nodes = new Map(prev.nodes);
-            nodes.delete(event.payload.id);
-            return { ...prev, nodes };
-          }
-          case "node_merged": {
-            const nodes = new Map(prev.nodes);
-            nodes.delete(event.payload.from_id);
-            return { ...prev, nodes };
-          }
-          case "relationship_added": {
-            const relationships = new Map(prev.relationships);
-            relationships.set(event.payload.id, event.payload);
-            return { ...prev, relationships };
-          }
-          case "relationship_removed": {
-            const relationships = new Map(prev.relationships);
-            relationships.delete(event.payload.id);
-            return { ...prev, relationships };
-          }
-          case "flower_created":
-          case "flower_updated": {
-            const flowers = new Map(prev.flowers);
-            flowers.set(event.payload.id, event.payload);
-            return { ...prev, flowers };
-          }
-          case "flower_dissolved": {
-            const flowers = new Map(prev.flowers);
-            flowers.delete(event.payload.id);
-            return { ...prev, flowers };
-          }
-          default:
-            return prev;
-        }
-      });
-    },
-    [],
-  );
+    if (event.type === "resync_required") {
+      // The server's bounded per-client queue overflowed and dropped events,
+      // so local graph state is incomplete. Schedule a debounced full refetch
+      // (a burst of resync events causes one refetch).
+      resyncSchedulerRef.current?.request();
+      return;
+    }
+
+    // Handle counters outside the map update to keep logic clean
+    if (event.type === "chunk_processed") {
+      setBuilderCount((c) => c + 1);
+      setLastChunkError(event.payload.error ?? null);
+    } else if (event.type === "gardener_cycle") {
+      setGardenerCount((c) => c + 1);
+    } else if (event.type === "reference_added") {
+      setResearcherCount((c) => c + 1);
+    }
+
+    setMaps((prev) => applyEventToMaps(prev, event));
+  }, []);
 
   const { connectionState, lastError: sseError } = useSSE({
     sessionId,
@@ -175,4 +246,3 @@ export function useGraphState(sessionId: string | null | undefined) {
 }
 
 export type UseGraphStateReturn = ReturnType<typeof useGraphState>;
-

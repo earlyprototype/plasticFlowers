@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from time import perf_counter
-from typing import Annotated, Iterable, List, Literal, Mapping, MutableSequence, Sequence
+from typing import Annotated, Iterable, List, Literal, Mapping, MutableSequence, Optional, Sequence
 
 from pydantic import BaseModel, BeforeValidator, Field, ValidationError, model_validator
 
@@ -52,7 +52,10 @@ class FlowerAction(BaseModel):
         ...,
         description="create=new flower, update=modify members, dissolve=remove flower"
     )
-    flower_id: str = Field("", description="Flower ID if updating/dissolving, else empty")
+    flower_id: Optional[str] = Field(
+        None,
+        description="Flower ID if updating/dissolving; None or empty means create-new",
+    )
     label: str = Field("", description="Flower label (2-5 words describing the theme)")
     member_ids: List[str] = Field(default_factory=list, description="List of node IDs (e.g., ['node_abc123', 'node_def456'])")
     stem_node_id: str = Field("", description="ID of the central/stem node (must be in member_ids)")

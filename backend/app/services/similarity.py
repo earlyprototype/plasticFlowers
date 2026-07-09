@@ -8,52 +8,16 @@ from __future__ import annotations
 import logging
 from collections import OrderedDict
 from dataclasses import dataclass
-from functools import lru_cache
-from typing import Dict, List, Optional, Union
+from typing import List, Optional
 
 import numpy as np
 
 from ..config import get_settings
-from ..models import Node
 from .embeddings import generate_embedding
-from .graph_db import record_node_mention
 from .graph_schema import NODE_EMBEDDING_INDEX
 from .neo4j import get_driver
 
 logger = logging.getLogger(__name__)
-
-
-@dataclass(slots=True)
-class SimilarityBaseResult:
-    embedding: List[float]
-
-
-@dataclass(slots=True)
-class SimilarityMatchResult(SimilarityBaseResult):
-    node: Node
-    score: float
-
-
-@dataclass(slots=True)
-class SimilarityCreateResult(SimilarityBaseResult):
-    """Indicates caller should create a new ghost node."""
-
-
-SimilarityResult = Union[SimilarityMatchResult, SimilarityCreateResult]
-
-
-async def run_similarity(session_id: str, label: str, timestamp: float) -> SimilarityResult:
-    """Run the embedding + vector search flow and return the decision."""
-
-    settings = get_settings()
-    embedding = await generate_embedding(label)
-    candidate = await _query_best_match(session_id, embedding, settings.similarity_top_k)
-
-    if candidate and candidate.score >= settings.similarity_threshold:
-        updated_node = await record_node_mention(session_id, candidate.node_id, timestamp)
-        return SimilarityMatchResult(embedding=embedding, node=updated_node, score=candidate.score)
-
-    return SimilarityCreateResult(embedding=embedding)
 
 
 @dataclass(slots=True)
@@ -62,36 +26,64 @@ class _MatchCandidate:
     score: float
 
 
-async def _query_best_match(
-    session_id: str, embedding: List[float], top_k: int
-) -> Optional[_MatchCandidate]:
-    """Return the highest-scoring node id for the provided embedding."""
+# The vector index is global: queryNodes takes the top-k across ALL sessions
+# and only then do we filter by session_id. The wide second pass uses this k
+# so other sessions' nodes cannot crowd this session's true matches out of
+# the candidate set when the narrow first pass comes back short.
+_VECTOR_OVERFETCH_K = 50
 
-    driver = await get_driver()
-    query = """
+_VECTOR_QUERY = """
     CALL db.index.vector.queryNodes($index_name, $top_k, $embedding)
     YIELD node, score
     WHERE node.session_id = $session_id
     RETURN node.id AS node_id, score
     ORDER BY score DESC
-    LIMIT 1
     """
-    params = {
-        "index_name": NODE_EMBEDDING_INDEX,
-        "top_k": top_k,
-        "embedding": embedding,
-        "session_id": session_id,
-    }
 
-    async with driver.session() as session:
-        async def _work(tx, cypher: str, arguments: dict) -> Optional[_MatchCandidate]:
-            result = await tx.run(cypher, **arguments)
-            record = await result.single()
-            if record is None:
-                return None
-            return _MatchCandidate(node_id=record["node_id"], score=float(record["score"]))
 
-        return await session.execute_read(_work, query, params)
+async def _query_best_match(
+    session_id: str, embedding: List[float], top_k: int
+) -> Optional[_MatchCandidate]:
+    """Return the highest-scoring node id for the provided embedding.
+
+    Two-pass strategy keeps the hot path cheap: first query with the
+    caller-requested ``top_k``; only when the session-filtered results are
+    insufficient (fewer than ``top_k`` rows survive the filter, i.e. other
+    sessions' nodes occupied part of the window) requery with the wide
+    ``_VECTOR_OVERFETCH_K``.
+    """
+
+    driver = await get_driver()
+
+    async def _run_query(k: int) -> List[_MatchCandidate]:
+        params = {
+            "index_name": NODE_EMBEDDING_INDEX,
+            "top_k": k,
+            "embedding": embedding,
+            "session_id": session_id,
+        }
+
+        async with driver.session() as session:
+            async def _work(tx, cypher: str, arguments: dict) -> List[_MatchCandidate]:
+                result = await tx.run(cypher, **arguments)
+                candidates: List[_MatchCandidate] = []
+                async for record in result:
+                    candidates.append(
+                        _MatchCandidate(
+                            node_id=record["node_id"], score=float(record["score"])
+                        )
+                    )
+                return candidates
+
+            return await session.execute_read(_work, _VECTOR_QUERY, params)
+
+    candidates = await _run_query(top_k)
+    if len(candidates) < top_k and top_k < _VECTOR_OVERFETCH_K:
+        # Session results were (possibly) crowded out of the narrow window —
+        # requery with the wide k before concluding there is no match.
+        candidates = await _run_query(_VECTOR_OVERFETCH_K)
+
+    return candidates[0] if candidates else None
 
 
 # Type embedding cache with LRU eviction (ADR-013)
@@ -193,10 +185,6 @@ def clear_type_cache() -> None:
 
 
 __all__ = [
-    "run_similarity",
-    "SimilarityResult",
-    "SimilarityMatchResult",
-    "SimilarityCreateResult",
     "types_compatible",
     "clear_type_cache",
 ]

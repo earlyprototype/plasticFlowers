@@ -177,7 +177,7 @@ Testing gemini-2.5-flash...
 ### Integration Test Fixes Applied
 1. **Chunk Submission**: Fixed response field reference (`chunk_id` not `id`)
 2. **Chunk Retrieval**: Updated to use session detail endpoint (no dedicated chunks GET endpoint)
-3. **Neo4j Auth**: Corrected password from `plastic-flower` to `pfNeo4j2025!`
+3. **Neo4j Auth**: Corrected password from `plastic-flower` to `<redacted — rotate if ever used>`
 
 ---
 

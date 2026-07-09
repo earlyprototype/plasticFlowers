@@ -37,8 +37,8 @@ GEMINI_API_KEY=your_gemini_api_key
 # Check Neo4j is running
 docker ps | Select-String "neo4j"
 
-# If not running, start it
-docker compose -f docker/docker-compose.yml up -d
+# If not running, start it (from repo root so compose reads the root .env)
+docker compose -f docker/docker-compose.yml --env-file .env up -d
 ```
 
 ### 1.3 API Key Validation
@@ -53,12 +53,11 @@ Write-Host "API Key present: $($env:GEMINI_API_KEY.Length -gt 10)"
 
 ## 2. Startup (Manual)
 
-### 2.1 Start Neo4j
+### 2.1 Start Neo4j + Redis
 
 ```powershell
-cd docker
-docker compose up -d
-cd ..
+# From repo root — compose must be pointed at the root .env
+docker compose -f docker/docker-compose.yml --env-file .env up -d
 ```
 
 Wait for Neo4j browser at http://localhost:7474
@@ -74,7 +73,7 @@ cd backend
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8010
 ```
 
-Verify: http://127.0.0.1:8010/health returns `{"status":"ok"}`
+Verify: http://127.0.0.1:8010/health returns `{"status":"ok","neo4j":"ok"}`
 
 ### 2.3 Start Frontend
 
@@ -92,11 +91,19 @@ Verify: http://localhost:3000 loads the graph canvas
 ## 3. Startup (Helper Script)
 
 ```powershell
-# From project root
+# From project root (Windows)
 .\scripts\start_mvp.ps1
 
 # Or with fake mode for testing
 .\scripts\start_mvp.ps1 -FakeMode
+```
+
+```bash
+# From project root (Linux / macOS)
+bash scripts/start_mvp.sh
+
+# Or with fake mode for testing
+bash scripts/start_mvp.sh --fake-mode
 ```
 
 ### 3.1 Quick Smoke Test (pre-demo)
@@ -131,7 +138,7 @@ python backend/scripts/smoke_test.py --base http://127.0.0.1:8010 --output _docs
 
 ### 4.3 Observe Gardener Cycle
 
-1. Wait 90 seconds
+1. Keep talking — the Gardener triggers after every 5 processed chunks (`builder_gardener_ratio`, ADR-0010), with a 5-second safety debounce; there is no fixed wall-clock interval
 2. Watch for:
    - `gardener_cycle` event in console/logs
    - Ghost nodes becoming solid (dashed → solid border)
@@ -194,7 +201,7 @@ python backend/scripts/smoke_test.py --base http://127.0.0.1:8010 --output _docs
 
 ### Gardener Not Running
 
-1. Check it's been 90 seconds since last activity
+1. Check enough chunks have been submitted — the Gardener runs once per 5 Builder chunks (ratio-based, ADR-0010), so short sessions may not reach a trigger
 2. Check for ghost nodes or recent chunk submissions
 3. Check backend logs for scheduler errors
 
@@ -210,7 +217,7 @@ python backend/scripts/smoke_test.py --base http://127.0.0.1:8010 --output _docs
 | Metric | Target | Warning |
 |--------|--------|---------|
 | Builder round-trip | < 5s | > 10s |
-| Gardener cycle | ~90s | Drift > 5s |
+| Gardener trigger | every 5 Builder chunks (+5s debounce) | No run after ≥5 chunks |
 | SSE reconnect | < 5s | > 15s |
 | FCose layout | < 2s | > 5s (>200 nodes) |
 
@@ -222,10 +229,8 @@ python backend/scripts/smoke_test.py --base http://127.0.0.1:8010 --output _docs
 # Stop services
 # Ctrl+C in backend and frontend terminals
 
-# Stop Neo4j
-cd docker
-docker compose down
-cd ..
+# Stop Neo4j + Redis (from repo root)
+docker compose -f docker/docker-compose.yml --env-file .env down
 
 # Clear test data (optional)
 # Connect to Neo4j and run: MATCH (n) DETACH DELETE n

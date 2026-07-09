@@ -13,11 +13,9 @@ import { AnimationController } from './animation/animationController';
 import { applyAdaptiveStemPetalPositioning } from './layout/stemPetalPositioning';
 import { LAYOUT_CONFIG, ANIMATION_CONFIG, STYLE_CONFIG } from './config/layoutConfig';
 
-let fcoseRegistered = false;
-if (!fcoseRegistered) {
-  cytoscape.use(fcose);
-  fcoseRegistered = true;
-}
+// Register the fcose layout once at module scope (module evaluation already
+// runs exactly once per bundle — a mutable guard flag was a no-op).
+cytoscape.use(fcose);
 
 export type GraphCanvasProps = {
   nodes: Node[];
@@ -65,7 +63,15 @@ export function GraphCanvas({
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<Core | null>(null);
-  const animController = useRef(new AnimationController());
+  // Lazy init: `useRef(new AnimationController())` would construct (and throw
+  // away) a fresh instance on every render.
+  const animControllerRef = useRef<AnimationController | null>(null);
+  const getAnimController = useCallback(() => {
+    if (!animControllerRef.current) {
+      animControllerRef.current = new AnimationController();
+    }
+    return animControllerRef.current;
+  }, []);
   const syncDebounceTimerRef = useRef<NodeJS.Timeout | null>(null);
   const previousFlowersRef = useRef<Flower[]>([]);
   
@@ -240,6 +246,10 @@ export function GraphCanvas({
           },
           {
           duration: 800,
+          complete: () => {
+            // Drop inline opacity so stylesheet rules (e.g. ghost 0.15) win again
+            children.removeStyle('opacity');
+          },
           }
         );
         node.animate(
@@ -254,31 +264,59 @@ export function GraphCanvas({
       }
     });
 
+    // Hover styling: Cytoscape has no :hover pseudo-class, so toggle a
+    // `.hovered` class (styled in layoutConfig) from mouse events.
+    const handleHoverOn = (evt: cytoscape.EventObject) => {
+      evt.target.addClass('hovered');
+    };
+    const handleHoverOff = (evt: cytoscape.EventObject) => {
+      evt.target.removeClass('hovered');
+    };
+    cy.on('mouseover', 'node.flower', handleHoverOn);
+    cy.on('mouseout', 'node.flower', handleHoverOff);
+    cy.on('mouseover', 'edge', handleHoverOn);
+    cy.on('mouseout', 'edge', handleHoverOff);
+
     const resizeObserver = new ResizeObserver(() => {
       cy.resize();
     });
     resizeObserver.observe(containerRef.current);
 
+    // Capture the controller in effect scope so the cleanup does not read a
+    // ref that may have changed by teardown time (react-hooks/exhaustive-deps).
+    const controller = getAnimController();
+
     return () => {
       resizeObserver.disconnect();
-      animController.current.stopAllFloatAnimations(cy);
+      cy.off('mouseover', 'node.flower', handleHoverOn);
+      cy.off('mouseout', 'node.flower', handleHoverOff);
+      cy.off('mouseover', 'edge', handleHoverOn);
+      cy.off('mouseout', 'edge', handleHoverOff);
+      controller.stopAllFloatAnimations(cy);
       cy.destroy();
       cyRef.current = null;
     };
-  }, []);
+  }, [getAnimController]);
 
   // Debounced graph update with clean orchestration
   useEffect(() => {
     const cy = cyRef.current;
     if (!cy) return;
-    
+
+    // Guards against the async callback continuing to use `cy` after the
+    // effect re-ran or the component unmounted (cy.destroy()).
+    let cancelled = false;
+    const controller = getAnimController();
+
     // Clear existing debounce timer
     if (syncDebounceTimerRef.current) {
       clearTimeout(syncDebounceTimerRef.current);
     }
-    
+
     // Schedule update after debounce delay
     syncDebounceTimerRef.current = setTimeout(async () => {
+      syncDebounceTimerRef.current = null;
+      if (cancelled || cy.destroyed()) return;
       // 1. Calculate layout (pure function)
       const currentPositions = captureCurrentPositions(cy);
       const layoutResult = calculateLayout(
@@ -331,6 +369,10 @@ export function GraphCanvas({
 
         // Unlock all nodes
         cy.nodes().unlock();
+
+        // Re-anchor float animations to the freshly laid-out positions so
+        // floats don't fight the layout with stale captured anchors.
+        controller.reanchorFloats(cy);
       }
 
       // 3.5. Apply stem-petal positioning within flowers
@@ -341,21 +383,22 @@ export function GraphCanvas({
       }
 
       // 4. Execute animation sequence (camera-first!)
-      await animController.current.executeAnimationSequence(cy, syncResult, layoutResult.isolatedNodeIds);
+      await controller.executeAnimationSequence(cy, syncResult, layoutResult.isolatedNodeIds);
+      if (cancelled || cy.destroyed()) return;
 
       // 5. Update previous flowers for next comparison
       previousFlowersRef.current = [...flowers];
-
-      syncDebounceTimerRef.current = null;
     }, ANIMATION_CONFIG.debounceMs);
-    
+
     // Cleanup
     return () => {
+      cancelled = true;
       if (syncDebounceTimerRef.current) {
         clearTimeout(syncDebounceTimerRef.current);
+        syncDebounceTimerRef.current = null;
       }
     };
-  }, [nodes, relationships, flowers]);
+  }, [nodes, relationships, flowers, getAnimController]);
 
   return (
     <div className={`graph-canvas ${className ?? ''}`}>

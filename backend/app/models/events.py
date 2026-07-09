@@ -125,3 +125,15 @@ class ReferenceAddedEvent(SSEvent):
     """Event broadcast when a ReferenceNode is attached to a Node."""
     type: Literal["reference_added"] = "reference_added"
     payload: ReferenceAddedPayload
+
+
+class ResyncRequiredPayload(BaseModel):
+    """Payload for resync_required control events."""
+    reason: str = Field(..., description="Why the client must resync (e.g. event_overflow)")
+
+
+class ResyncRequiredEvent(SSEvent):
+    """Control event: the server dropped SSE events for this subscriber, so the
+    client must re-fetch the full graph state instead of trusting the stream."""
+    type: Literal["resync_required"] = "resync_required"
+    payload: ResyncRequiredPayload

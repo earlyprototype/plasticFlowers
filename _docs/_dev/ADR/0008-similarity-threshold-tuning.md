@@ -65,7 +65,7 @@ The threshold is higher than the original 0.85 because:
 
 ### Neutral
 - Threshold can be adjusted via environment variable
-- Test script (`test_vector_search.py`) available for re-tuning
+- Test script (`manual_test_vector_search.py`) available for re-tuning
 
 ## Alternatives Considered
 
@@ -86,12 +86,12 @@ The threshold is higher than the original 0.85 because:
 
 - `backend/app/config.py` - `similarity_threshold` setting
 - `backend/app/services/similarity.py` - Pre-Builder similarity check
-- `backend/test_vector_search.py` - Threshold testing script
+- `backend/scripts/manual_test_vector_search.py` - Threshold testing script
 - ADR-001: LLM-only clustering (Gardener handles edge cases)
 
 ## Notes
 
 The threshold tuning revealed that abbreviations ("ML", "AI") don't embed as close to their full forms as expected. This is a known limitation of embedding models. The Gardener agent compensates by using LLM reasoning to identify these cases.
 
-Re-run `test_vector_search.py` after any model changes to validate the threshold.
+Re-run `manual_test_vector_search.py` after any model changes to validate the threshold.
 

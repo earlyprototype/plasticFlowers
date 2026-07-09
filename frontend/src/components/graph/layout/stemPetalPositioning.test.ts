@@ -21,21 +21,21 @@ describe('stemPetalPositioning', () => {
   describe('calculateOptimalOrbitRadius', () => {
     it('should calculate base radius for 1 petal', () => {
       const radius = calculateOptimalOrbitRadius(1);
-      // Minimum 180px or 140 + (1 * 25) = 165, so returns 180
-      expect(radius).toBe(180);
+      // 80 + (1 * 15) = 95
+      expect(radius).toBe(95);
     });
 
     it('should scale radius with petal count', () => {
       const radius3 = calculateOptimalOrbitRadius(3);
       const radius5 = calculateOptimalOrbitRadius(5);
-      
+
       expect(radius5).toBeGreaterThan(radius3);
-      expect(radius5).toBe(265); // 140 + (5 * 25) = 265
+      expect(radius5).toBe(155); // 80 + (5 * 15) = 155
     });
 
     it('should handle large petal counts', () => {
       const radius10 = calculateOptimalOrbitRadius(10);
-      expect(radius10).toBe(390); // 140 + (10 * 25) = 390
+      expect(radius10).toBe(230); // 80 + (10 * 15) = 230
     });
   });
 
@@ -64,6 +64,7 @@ describe('stemPetalPositioning', () => {
           id: 'flower1',
           label: 'Test Flower',
           stem_node_id: 'stem1',
+          edge_count: 1,
           member_ids: ['stem1'],
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -77,7 +78,7 @@ describe('stemPetalPositioning', () => {
       // Verify stem node exists and is child of flower
       const stemNode = cy.getElementById('stem1');
       expect(stemNode.nonempty()).toBe(true);
-      expect(stemNode.parent().id()).toBe('flower1');
+      expect(stemNode.parent().first().id()).toBe('flower1');
     });
 
     it('should arrange petals in circle around stem', () => {
@@ -118,6 +119,7 @@ describe('stemPetalPositioning', () => {
           id: 'flower1',
           label: 'Test Flower',
           stem_node_id: 'stem1',
+          edge_count: 1,
           member_ids: ['stem1', 'petal1', 'petal2', 'petal3'],
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -166,6 +168,7 @@ describe('stemPetalPositioning', () => {
           id: 'flower1',
           label: 'Test Flower',
           stem_node_id: null as any, // No stem
+          edge_count: 1,
           member_ids: ['node1'],
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -204,6 +207,7 @@ describe('stemPetalPositioning', () => {
           id: 'flower1',
           label: 'Test Flower',
           stem_node_id: 'stem1',
+          edge_count: 1,
           member_ids: ['stem1'], // Only stem
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -252,6 +256,7 @@ describe('stemPetalPositioning', () => {
           id: 'flower1',
           label: 'Test Flower',
           stem_node_id: 'stem1',
+          edge_count: 1,
           member_ids: memberIds,
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -336,6 +341,7 @@ describe('stemPetalPositioning', () => {
           id: 'flower1',
           label: 'Flower 1',
           stem_node_id: 'stem1',
+          edge_count: 1,
           member_ids: ['stem1', 'petal1a', 'petal1b'],
           created_at: '2025-01-01T00:00:00Z',
         },
@@ -343,6 +349,7 @@ describe('stemPetalPositioning', () => {
           id: 'flower2',
           label: 'Flower 2',
           stem_node_id: 'stem2',
+          edge_count: 1,
           member_ids: ['stem2', 'petal2a', 'petal2b', 'petal2c'],
           created_at: '2025-01-01T00:00:00Z',
         },

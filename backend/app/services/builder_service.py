@@ -22,7 +22,7 @@ from ..agents import BuilderAgent, BuilderAgentError, BuilderAgentResult, Unreso
 from ..config import get_settings
 from ..models import Node, Relationship, RelationshipSource, TranscriptChunk
 from .embeddings import generate_embedding, is_fake_embeddings_enabled
-from .graph_db import create_node, create_relationship, list_nodes, list_relationships, save_chunk, record_node_mention, get_node
+from .graph_db import create_node, create_relationship, list_nodes, list_relationships, record_node_mention, get_node
 from .redis_streams import publish_chunk_added
 from .sse_manager import sse_manager
 from ..models import (
@@ -170,11 +170,13 @@ class BuilderService:
         resolved_rels = self._resolve_relationships(
             agent_result.relationships, label_to_id, existing_nodes
         )
+        # Note: the chunk itself is persisted by the API layer
+        # (api/chunks.py -> chunk_store.save) before Builder runs, so it is
+        # available for transcript/export even if this pipeline fails.
         if self._skip_neo4j:
             persisted_rels = resolved_rels
         else:
             persisted_rels = await self._persist_relationships(session_id, resolved_rels)
-            await save_chunk(chunk)
 
         # 5. Broadcast SSE events
         await self._broadcast_nodes(session_id, new_nodes)
@@ -424,17 +426,30 @@ class BuilderService:
         session_id: str,
         relationships: List[Relationship],
     ) -> List[Relationship]:
-        """Persist relationships to Neo4j."""
+        """Persist relationships to Neo4j.
+
+        create_relationship returns None when an endpoint node is missing;
+        skip those (with a log) instead of appending None — a None payload
+        would crash the RelationshipAddedEvent broadcast and fail the whole
+        chunk after nodes were already persisted.
+        """
         persisted: List[Relationship] = []
         for rel in relationships:
             try:
-                persisted.append(await create_relationship(session_id, rel))
+                created = await create_relationship(session_id, rel)
             except RuntimeError as e:
                 logger.error(
                     "builder.relationship_failed id=%s source=%s target=%s error=%s",
                     rel.id, rel.source_id, rel.target_id, e,
                 )
                 raise
+            if created is None:
+                logger.warning(
+                    "builder.relationship_skipped_missing_nodes id=%s source=%s target=%s",
+                    rel.id, rel.source_id, rel.target_id,
+                )
+                continue
+            persisted.append(created)
         return persisted
 
     async def _broadcast_nodes(self, session_id: str, nodes: List[Node]) -> None:

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Dict, Optional
 
 from pydantic import BaseModel, Field
@@ -28,7 +28,7 @@ class SessionVocabulary(BaseModel):
         description="Variant normalisation (e.g., 'color' -> 'colour' for en-GB)"
     )
     updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(),
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Last vocabulary update timestamp"
     )
 
@@ -45,7 +45,7 @@ class TranscriptCorrection(BaseModel):
     correction: str = Field(..., description="Corrected text")
     confidence: float = Field(..., ge=0.0, le=1.0, description="LLM confidence in correction")
     applied_at: datetime = Field(
-        default_factory=lambda: datetime.now(),
+        default_factory=lambda: datetime.now(timezone.utc),
         description="When correction was applied"
     )
     affected_node_ids: list[str] = Field(
@@ -72,7 +72,7 @@ class ProofreadCheckpoint(BaseModel):
     session_id: str = Field(..., description="Session identifier")
     last_chunk_id: str = Field(..., description="ID of last processed TranscriptChunk")
     last_run: datetime = Field(
-        default_factory=lambda: datetime.now(),
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Timestamp of last proofread cycle"
     )
     chunks_processed: int = Field(
@@ -109,6 +109,6 @@ class SessionContext(BaseModel):
         description="Technical vocabulary specific to this session"
     )
     updated_at: datetime = Field(
-        default_factory=lambda: datetime.now(),
+        default_factory=lambda: datetime.now(timezone.utc),
         description="Last context update timestamp"
     )

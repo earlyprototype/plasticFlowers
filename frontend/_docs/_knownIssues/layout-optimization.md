@@ -5,7 +5,7 @@
 **Severity:** MEDIUM  
 **Performance Impact:** HIGH (at scale)  
 **Status:** DEFERRED - Requires extensive testing  
-**Related Review:** CYTOSCAPE_CODE_REVIEW.md (Section 2, Issue 3)
+**Related Review:** ../_history/CYTOSCAPE_CODE_REVIEW.md (Section 2, Issue 3)
 
 ---
 
