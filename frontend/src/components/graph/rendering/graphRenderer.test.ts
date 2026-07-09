@@ -265,6 +265,105 @@ describe('graphRenderer', () => {
     });
   });
 
+  describe('parent normalization', () => {
+    const parentlessNode: Node = {
+      id: 'node1',
+      label: 'Loner',
+      confidence: 0.8,
+      mentions: 1,
+      timestamps: [100],
+      inferred_type: 'concept',
+      flower_id: null,
+      created_at: '2025-01-01T00:00:00Z',
+      status: 'solid',
+    };
+
+    const emptyLayoutResult = (): LayoutResult => ({
+      nodePositions: new Map(),
+      lockedNodeIds: new Set(),
+      isolatedNodeIds: new Set(),
+      flowerStructureChanged: false,
+    });
+
+    it('does not move() parentless nodes on repeated syncs', () => {
+      // First sync creates the node
+      syncGraphStructure(
+        cy,
+        { nodes: [parentlessNode], relationships: [], flowers: [] },
+        emptyLayoutResult()
+      );
+
+      // Cytoscape emits `move` whenever an element changes compound parent —
+      // before normalization, undefined !== null caused a move() every sync.
+      const moves: string[] = [];
+      cy.on('move', (evt) => moves.push(evt.target.id()));
+
+      syncGraphStructure(
+        cy,
+        { nodes: [parentlessNode], relationships: [], flowers: [] },
+        emptyLayoutResult()
+      );
+      syncGraphStructure(
+        cy,
+        { nodes: [parentlessNode], relationships: [], flowers: [] },
+        emptyLayoutResult()
+      );
+
+      expect(moves).toEqual([]);
+    });
+
+    it('does not move() nodes whose flower parent is unchanged', () => {
+      const flowers: Flower[] = [
+        {
+          id: 'flower1',
+          label: 'Flower 1',
+          stem_node_id: 'node1',
+          edge_count: 1,
+          member_ids: ['node1'],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ];
+      const memberNode: Node = { ...parentlessNode, flower_id: 'flower1' };
+
+      // First sync creates flower + node (initial move into the flower is fine)
+      syncGraphStructure(cy, { nodes: [memberNode], relationships: [], flowers }, emptyLayoutResult());
+
+      const moves: string[] = [];
+      cy.on('move', (evt) => moves.push(evt.target.id()));
+
+      syncGraphStructure(cy, { nodes: [memberNode], relationships: [], flowers }, emptyLayoutResult());
+
+      expect(moves).toEqual([]);
+      expect(cy.getElementById('node1').parent().first().id()).toBe('flower1');
+    });
+
+    it('still moves a node when its parent actually changes', () => {
+      const flowers: Flower[] = [
+        {
+          id: 'flower1',
+          label: 'Flower 1',
+          stem_node_id: 'node1',
+          edge_count: 1,
+          member_ids: ['node1'],
+          created_at: '2025-01-01T00:00:00Z',
+        },
+      ];
+
+      // Start parentless
+      syncGraphStructure(
+        cy,
+        { nodes: [parentlessNode], relationships: [], flowers: [] },
+        emptyLayoutResult()
+      );
+
+      // Then join a flower
+      const memberNode: Node = { ...parentlessNode, flower_id: 'flower1' };
+      syncGraphStructure(cy, { nodes: [memberNode], relationships: [], flowers }, emptyLayoutResult());
+
+      expect(cy.getElementById('node1').parent().first().id()).toBe('flower1');
+    });
+  });
+
   describe('edge sync', () => {
     it('should add new edges', () => {
       const nodes: Node[] = [

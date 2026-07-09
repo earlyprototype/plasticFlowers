@@ -158,7 +158,9 @@ export const STYLE_CONFIG = [
     },
   },
   {
-    selector: 'node.flower:hover',
+    // Cytoscape.js has no :hover pseudo-class — GraphCanvas toggles the
+    // `.hovered` class via mouseover/mouseout events.
+    selector: 'node.flower.hovered',
     style: {
       'border-width': 3,
       'border-color': '#4a90e2',
@@ -193,7 +195,8 @@ export const STYLE_CONFIG = [
     },
   },
   {
-    selector: 'edge:hover',
+    // See note on node.flower.hovered — hover is driven by event handlers.
+    selector: 'edge.hovered',
     style: {
       width: 2,
       opacity: 1,

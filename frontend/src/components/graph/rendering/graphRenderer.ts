@@ -153,8 +153,12 @@ function syncNodes(
       existing.data(elementData);
       existing.classes(classes.join(' '));
       
-      // Move to new parent if needed
-      if ((existing.parent() as any)?.id() !== parentId) {
+      // Move to new parent if needed.
+      // Normalize both sides to null: `.parent().first().id()` is undefined for
+      // parentless nodes, and `undefined !== null` would move() (remove+re-add)
+      // every unclustered node on every sync.
+      const currentParentId = existing.parent().first().id() ?? null;
+      if (currentParentId !== parentId) {
         existing.move({ parent: parentId });
       }
       

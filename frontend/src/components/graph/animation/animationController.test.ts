@@ -109,6 +109,93 @@ describe('AnimationController', () => {
       }).not.toThrow();
     });
 
+    it('does not float nodes with two or more connections', async () => {
+      cy.add([
+        { group: 'nodes', data: { id: 'node1' } },
+        { group: 'nodes', data: { id: 'node2' } },
+        { group: 'nodes', data: { id: 'node3' } },
+        { group: 'edges', data: { id: 'e1', source: 'node1', target: 'node2' } },
+        { group: 'edges', data: { id: 'e2', source: 'node1', target: 'node3' } },
+      ]);
+
+      const syncResult: SyncResult = {
+        addedNodeIds: new Set(),
+        addedEdgeIds: new Set(),
+        removedNodeIds: new Set(),
+        removedEdgeIds: new Set(),
+        updatedNodeIds: new Set(),
+      };
+
+      // node1 has degree 2 -> considered settled, no float
+      await controller.executeAnimationSequence(cy, syncResult, new Set(['node1']));
+      expect(controller.activeFloatCount).toBe(0);
+    });
+
+    it('floats genuinely isolated nodes and stops them on cleanup', async () => {
+      cy.add({ group: 'nodes', data: { id: 'lone1' } });
+
+      const syncResult: SyncResult = {
+        addedNodeIds: new Set(),
+        addedEdgeIds: new Set(),
+        removedNodeIds: new Set(),
+        removedEdgeIds: new Set(),
+        updatedNodeIds: new Set(),
+      };
+
+      await controller.executeAnimationSequence(cy, syncResult, new Set(['lone1']));
+      expect(controller.activeFloatCount).toBe(1);
+
+      controller.stopAllFloatAnimations(cy);
+      expect(controller.activeFloatCount).toBe(0);
+    });
+
+    it('caps concurrent float animations', async () => {
+      const ids: string[] = [];
+      for (let i = 0; i < 40; i += 1) {
+        const id = `iso${i}`;
+        ids.push(id);
+        cy.add({ group: 'nodes', data: { id } });
+      }
+
+      const syncResult: SyncResult = {
+        addedNodeIds: new Set(),
+        addedEdgeIds: new Set(),
+        removedNodeIds: new Set(),
+        removedEdgeIds: new Set(),
+        updatedNodeIds: new Set(),
+      };
+
+      await controller.executeAnimationSequence(cy, syncResult, new Set(ids));
+      expect(controller.activeFloatCount).toBeLessThanOrEqual(30);
+      expect(controller.activeFloatCount).toBeGreaterThan(0);
+
+      controller.stopAllFloatAnimations(cy);
+    });
+
+    it('reanchorFloats drops floats for removed nodes and keeps live ones', async () => {
+      cy.add([
+        { group: 'nodes', data: { id: 'lone1' } },
+        { group: 'nodes', data: { id: 'lone2' } },
+      ]);
+
+      const syncResult: SyncResult = {
+        addedNodeIds: new Set(),
+        addedEdgeIds: new Set(),
+        removedNodeIds: new Set(),
+        removedEdgeIds: new Set(),
+        updatedNodeIds: new Set(),
+      };
+
+      await controller.executeAnimationSequence(cy, syncResult, new Set(['lone1', 'lone2']));
+      expect(controller.activeFloatCount).toBe(2);
+
+      cy.getElementById('lone2').remove();
+      controller.reanchorFloats(cy);
+      expect(controller.activeFloatCount).toBe(1);
+
+      controller.stopAllFloatAnimations(cy);
+    });
+
     it('should stop all float animations on cleanup', () => {
       cy.add([
         { group: 'nodes', data: { id: 'node1' } },
