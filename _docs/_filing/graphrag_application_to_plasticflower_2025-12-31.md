@@ -525,7 +525,7 @@ async def execute_debug_cypher(query: str):
 
 **Alignment with Neo4j Patterns:** The Aura Agent UI also uses camera adjustment before node rendering for responsive feel.
 
-**Status:** ✅ **Already implemented** - documented in REFACTOR_SUMMARY.md
+**Status:** ✅ **Already implemented** - documented in `frontend/_docs/_history/REFACTOR_SUMMARY.md`
 
 ---
 

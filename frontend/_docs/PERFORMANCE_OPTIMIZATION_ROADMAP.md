@@ -3,7 +3,7 @@
 **Date:** 2025-12-21  
 **Status:** Planning Phase  
 **Related Documents:**
-- `CYTOSCAPE_CODE_REVIEW.md` - Original code review
+- `_history/CYTOSCAPE_CODE_REVIEW.md` - Original code review
 - `CLEANUP_BLAST_RADIUS_ANALYSIS.md` - Risk assessment
 - `IMPLEMENTATION_PLAN_SAFE_FIXES.md` - Implementation plan for safe fixes
 - `_knownIssues/layout-optimization.md` - Deferred layout optimization details
@@ -195,7 +195,7 @@ Three performance issues identified in code review, categorised by risk/reward:
 ## Documentation Updates Needed
 
 **After Phase 1 completion:**
-- [ ] Update CYTOSCAPE_CODE_REVIEW.md with resolved issues
+- [ ] Update _history/CYTOSCAPE_CODE_REVIEW.md with resolved issues
 - [ ] Document new `createTemporalStyler()` function
 - [ ] Document animation tracking pattern
 - [ ] Add performance benchmark results

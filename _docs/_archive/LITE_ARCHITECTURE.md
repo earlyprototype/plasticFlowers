@@ -1,9 +1,11 @@
 # Architectural Advisory: plasticFlower Lite
 
+> **Archived — separate project.** This is the design for a browser-only "plasticFlower Lite" proof of concept; none of this code exists in this repository. Kept for reference only.
+
 **Date:** 26 December 2025  
 **Version:** 1.0 (Browser-First)  
 **Context:** Lightweight single-session implementation using Gemini + Browser APIs only  
-**Companion to:** [ARCHITECTURE_ADVISORY.md](./ARCHITECTURE_ADVISORY.md) (full system)
+**Companion to:** [ARCHITECTURE_ADVISORY.md](../ARCHITECTURE_ADVISORY.md) (full system)
 
 ---
 
@@ -3142,5 +3144,5 @@ plasticFlower Lite provides a **fast path to a working demo** with minimal infra
 - Quick experiments
 - Situations where full Neo4j stack is overkill
 
-When you need durability and cross-session intelligence, upgrade to the [full architecture](./ARCHITECTURE_ADVISORY.md).
+When you need durability and cross-session intelligence, upgrade to the [full architecture](../ARCHITECTURE_ADVISORY.md).
 

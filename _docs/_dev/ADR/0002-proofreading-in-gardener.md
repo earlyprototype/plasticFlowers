@@ -69,7 +69,7 @@ The Gardener will:
 ## Related
 
 - `@_docs/ARCHITECTURE_ADVISORY.md` - Section 3.2: Gardener
-- `@_docs/LITE_ARCHITECTURE.md` - Section 5.3: SessionController.runGardener()
+- `@_docs/_archive/LITE_ARCHITECTURE.md` - Section 5.3: SessionController.runGardener()
 - `@backend/app/agents/gardener.py`
 
 ## Notes

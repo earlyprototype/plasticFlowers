@@ -27,7 +27,7 @@ Neo4j configuration is centralised in `backend/app/config.py` with environment v
 |-----------|---------|---------------|-------------|
 | `NEO4J_URI` | `neo4j://127.0.0.1:7687` | `neo4j://localhost:7687` | Bolt protocol connection URI |
 | `NEO4J_USERNAME` | `neo4j` | `neo4j` | Authentication username |
-| `NEO4J_PASSWORD` | `plasticflower` | `pfNeo4j2025!` | Authentication password |
+| `NEO4J_PASSWORD` | `plasticflower` | `<redacted — rotate if ever used>` | Authentication password |
 | `NEO4J_MAX_CONNECTION_POOL_SIZE` | `10` | `10` | Maximum concurrent connections |
 | `NEO4J_MAX_CONNECTION_LIFETIME` | `3600` | `3600` | Connection recycling interval (seconds) |
 

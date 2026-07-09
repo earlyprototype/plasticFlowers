@@ -1,5 +1,7 @@
 # plasticFlower — Project Structure
 
+> **Historical planning document** — describes the pre-implementation design, not the current system. See [_docs/_audit/2026-07-08_audit_report.md](../../../_audit/2026-07-08_audit_report.md) for current state.
+
 ---
 
 ## Overview

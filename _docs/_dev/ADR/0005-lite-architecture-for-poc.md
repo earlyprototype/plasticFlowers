@@ -67,6 +67,6 @@ Lite version is designed for clean migration to full stack:
 
 ## References
 
-- Full specification: [`_docs/LITE_ARCHITECTURE.md`](../../LITE_ARCHITECTURE.md)
+- Full specification: [`_docs/_archive/LITE_ARCHITECTURE.md`](../../_archive/LITE_ARCHITECTURE.md)
 - Full architecture: [`_docs/ARCHITECTURE_ADVISORY.md`](../../ARCHITECTURE_ADVISORY.md)
 

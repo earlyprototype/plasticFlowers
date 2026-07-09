@@ -1,5 +1,7 @@
 # plasticFlower — Development Sign-Off Report
 
+> **Historical planning document** — describes the pre-implementation design, not the current system. See [_docs/_audit/2026-07-08_audit_report.md](../../_audit/2026-07-08_audit_report.md) for current state.
+
 > **Purpose:** Co-founder review and approval before development begins
 > **Date:** 13 December 2025
 > **Status:** Awaiting sign-off
@@ -121,16 +123,18 @@ Gate 3 (Persistence)           Frontend Scaffold
 
 All detailed plans are in `_dev/_plan/`:
 
-| Document | Path |
-|----------|------|
-| High-level plan | `_dev/_plan/overview/highplan.md` |
-| Gate 1 plan | `_dev/_plan/01_gate_dev_env/plan.md` |
-| Gate 2 plan | `_dev/_plan/02_gate_contracts/plan.md` |
-| Gate 3 plan | `_dev/_plan/03_gate_persistence/plan.md` |
-| Gate 4 plan | `_dev/_plan/04_gate_builder_loop/plan.md` |
-| Gate 5 plan | `_dev/_plan/05_gate_gardener_loop/plan.md` |
-| Gate 6 plan | `_dev/_plan/06_gate_exports/plan.md` |
-| Gate 7 plan | `_dev/_plan/07_gate_mvp_ready/plan.md` |
+> **Note (2026-07):** the `_dev/_plan/` tree referenced below was never committed to this repository. The plan pack was salvaged to `_docs/_filing/_archive/plan_mvp_gates/` — use the "Salvaged location" column.
+
+| Document | Path | Salvaged location |
+|----------|------|-------------------|
+| High-level plan | `_dev/_plan/overview/highplan.md` | `_docs/_filing/_archive/plan_mvp_gates/overview/highplan.md` |
+| Gate 1 plan | `_dev/_plan/01_gate_dev_env/plan.md` | `_docs/_filing/_archive/plan_mvp_gates/01_gate_dev_env/plan.md` |
+| Gate 2 plan | `_dev/_plan/02_gate_contracts/plan.md` | `_docs/_filing/_archive/plan_mvp_gates/02_gate_contracts/plan.md` |
+| Gate 3 plan | `_dev/_plan/03_gate_persistence/plan.md` | `_docs/_filing/_archive/plan_mvp_gates/03_gate_persistence/plan.md` |
+| Gate 4 plan | `_dev/_plan/04_gate_builder_loop/plan.md` | `_docs/_filing/_archive/plan_mvp_gates/04_gate_builder_loop/plan.md` |
+| Gate 5 plan | `_dev/_plan/05_gate_gardener_loop/plan.md` | `_docs/_filing/_archive/plan_mvp_gates/05_gate_gardener_loop/plan.md` |
+| Gate 6 plan | `_dev/_plan/06_gate_exports/plan.md` | `_docs/_filing/_archive/plan_mvp_gates/06_gate_exports/plan.md` |
+| Gate 7 plan | `_dev/_plan/07_gate_mvp_ready/plan.md` | `_docs/_filing/_archive/plan_mvp_gates/07_gate_mvp_ready/plan.md` |
 
 ---
 
@@ -217,7 +221,7 @@ By signing below, I confirm:
 
 ### Development Approach
 
-- [ ] I have reviewed the gate-based plan pack in `_dev/_plan/`
+- [ ] I have reviewed the gate-based plan pack in `_dev/_plan/` *(salvaged to `_docs/_filing/_archive/plan_mvp_gates/`)*
 - [ ] I approve the parallel vs serial development approach
 - [ ] I understand handover gates require explicit sign-off
 
@@ -244,7 +248,7 @@ By signing below, I confirm:
 | Pre-Implementation Report | `_docs/_dev/_MVP/_PRE_IMPLEMENTATION_REPORT.md` |
 | Handover | `_docs/_dev/_MVP/_HANDOVER.md` |
 | Decision Log | `_docs/_dev/_MVP/_DECISION_LOG.md` |
-| Plan Pack | `_dev/_plan/README.md` |
+| Plan Pack | `_dev/_plan/README.md` *(salvaged to `_docs/_filing/_archive/plan_mvp_gates/README.md`)* |
 
 ---
 

@@ -79,7 +79,7 @@ GraphRAG will be used only for:
 ## Related
 
 - `@_docs/ARCHITECTURE_ADVISORY.md` - Section 3.4: Librarian
-- `@_docs/LITE_ARCHITECTURE.md` - Section 5.2: GeminiClient.askQuestion()
+- `@_docs/_archive/LITE_ARCHITECTURE.md` - Section 5.2: GeminiClient.askQuestion()
 - `@_docs/_dev/_libraries_docs/nlp_graph_libs/neo4j_graphrag_docs.md`
 
 ## Notes

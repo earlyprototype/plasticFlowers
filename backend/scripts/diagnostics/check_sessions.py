@@ -1,15 +1,21 @@
-"""Check node distribution across sessions."""
+"""Check node distribution across sessions.
+
+Usage: python check_sessions.py <target_session_id> [comparison_session_id]
+Example: python check_sessions.py session_4387d19a5939466a81c7c534662692eb session_2425828cdbe243e69e2ae5bd4b8fdd6a
+"""
 import asyncio
 import os
 import sys
 
-# Ensure we're in the right directory
-os.chdir(os.path.dirname(os.path.abspath(__file__)))
+if len(sys.argv) < 2:
+    print("Usage: python check_sessions.py <target_session_id> [comparison_session_id]")
+    print("Example: python check_sessions.py session_4387d19a5939466a81c7c534662692eb")
+    sys.exit(1)
 
-# Session to check (from user's error)
-TARGET_SESSION = "session_4387d19a5939466a81c7c534662692eb"
-# Largest session (for comparison)
-LARGEST_SESSION = "session_2425828cdbe243e69e2ae5bd4b8fdd6a"
+# Session to check
+TARGET_SESSION = sys.argv[1]
+# Largest session (for comparison); defaults to the target session if not given
+LARGEST_SESSION = sys.argv[2] if len(sys.argv) > 2 else sys.argv[1]
 
 # Let's also check if session_id is stored correctly on all nodes
 CHECK_SESSION_ID_CONSISTENCY = True

@@ -3,6 +3,11 @@ import requests
 import time
 import json
 from datetime import datetime
+from pathlib import Path
+
+# Repo root: this file lives at backend/scripts/diagnostics/demo_10min.py
+REPO_ROOT = Path(__file__).resolve().parents[3]
+RESULTS_PATH = REPO_ROOT / "_docs" / "_evidence" / "gate7" / "demo_10min_results.json"
 
 BASE = "http://127.0.0.1:8010"
 
@@ -140,7 +145,8 @@ def main():
         "success": len(nodes) >= 10 and len(rels) >= 5
     }
     
-    with open(r"c:\Users\Fab2\Desktop\AI\_plasticFlower\_docs\_evidence\gate7\demo_10min_results.json", "w") as f:
+    RESULTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(RESULTS_PATH, "w") as f:
         json.dump(results, f, indent=2)
 
     print()
@@ -150,7 +156,7 @@ def main():
     else:
         print("DEMO INCOMPLETE (low counts)")
     print("=" * 60)
-    print(f"Results saved to: demo_10min_results.json")
+    print(f"Results saved to: {RESULTS_PATH}")
 
     # Cleanup
     requests.delete(f"{BASE}/api/sessions/{sid}")

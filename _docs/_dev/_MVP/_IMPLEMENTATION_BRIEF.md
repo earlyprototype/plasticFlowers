@@ -1,5 +1,7 @@
 # plasticFlower — Implementation Brief
 
+> **Historical planning document** — describes the pre-implementation design, not the current system. See [_docs/_audit/2026-07-08_audit_report.md](../../_audit/2026-07-08_audit_report.md) for current state.
+
 > **Purpose:** Handoff document for implementation planning
 > **Status:** All specifications complete, ready for build
 > **Version:** 1.1
