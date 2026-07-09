@@ -815,6 +815,7 @@ class GardenerScheduler:
                         id=f"flower_{uuid4().hex}",
                         label=action.label,
                         stem_node_id=action.stem_node_id,
+                        edge_count=edge_count,
                         member_ids=member_ids,
                         created_at=datetime.now(timezone.utc),
                     )
@@ -833,6 +834,7 @@ class GardenerScheduler:
                     flower.label = action.label
                     flower.member_ids = member_ids
                     flower.stem_node_id = action.stem_node_id
+                    flower.edge_count = edge_count
                     await upsert_flower(session_id, flower)
                     
                     # Update node memberships

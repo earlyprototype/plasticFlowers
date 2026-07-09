@@ -418,7 +418,9 @@ async def upsert_flower(session_id: str, flower: Flower) -> Flower:
     query = """
     MERGE (f:Flower {id: $flower_id, session_id: $session_id})
     SET f = $flower
-    RETURN f AS flower
+    WITH f
+    OPTIONAL MATCH (n:Node)-[:BELONGS_TO]->(f)
+    RETURN f AS flower, collect(n.id) AS member_ids
     """
     params = {
         "flower_id": flower.id,
@@ -432,7 +434,7 @@ async def upsert_flower(session_id: str, flower: Flower) -> Flower:
             record = await result.single()
             if record is None:
                 raise RuntimeError("Neo4j did not return upserted Flower")
-            return _flower_from_value(record["flower"])
+            return _flower_from_value(record["flower"], member_ids=record.get("member_ids"))
 
         return await session.execute_write(_work, query, params)
 
@@ -470,7 +472,8 @@ async def list_flowers(session_id: str) -> List[Flower]:
     driver = await get_driver()
     query = """
     MATCH (f:Flower {session_id: $session_id})
-    RETURN f AS flower
+    OPTIONAL MATCH (n:Node)-[:BELONGS_TO]->(f)
+    RETURN f AS flower, collect(n.id) AS member_ids
     ORDER BY f.created_at
     """
 
@@ -479,7 +482,7 @@ async def list_flowers(session_id: str) -> List[Flower]:
             result = await tx.run(cypher, **parameters)
             flowers: List[Flower] = []
             async for record in result:
-                flowers.append(_flower_from_value(record["flower"]))
+                flowers.append(_flower_from_value(record["flower"], member_ids=record.get("member_ids")))
             return flowers
 
         return await session.execute_read(_work, query, {"session_id": session_id})
@@ -513,6 +516,10 @@ def _relationship_to_properties(relationship: Relationship, session_id: str) -> 
 
 def _flower_to_properties(flower: Flower, session_id: str) -> Dict[str, Any]:
     data = flower.model_dump()
+    # Single source of truth: membership lives in BELONGS_TO relationships
+    # (written via set_node_flower). member_ids is derived on read
+    # (list_flowers/upsert_flower collect them), never stored as a property.
+    data.pop("member_ids", None)
     data[SESSION_KEY] = session_id
     return data
 
@@ -534,10 +541,13 @@ def _relationship_from_value(value: Neo4jRelationship) -> Relationship:
     return Relationship.model_validate(props)
 
 
-def _flower_from_value(value: Neo4jNode) -> Flower:
+def _flower_from_value(value: Neo4jNode, member_ids: Optional[List[str]] = None) -> Flower:
     props = dict(value)
     props.pop(SESSION_KEY, None)
     props["created_at"] = _convert_datetime(props.get("created_at"))
+    # Membership is derived from BELONGS_TO relationships at query time
+    # (see _flower_to_properties) — inject what the caller collected.
+    props["member_ids"] = [mid for mid in (member_ids or []) if mid]
     return Flower.model_validate(props)
 
 

@@ -23,6 +23,10 @@ class Flower(BaseModel):
     label: str = Field(..., min_length=2, max_length=64, description="Theme name (2-5 words)")
     stem_node_id: str = Field(..., description="Node with highest centrality for this Flower")
     edge_count: int = Field(..., ge=0, description="Simple density proxy (edge tally)")
+    member_ids: List[str] = Field(
+        default_factory=list,
+        description="Node ids belonging to this Flower (derived from BELONGS_TO relationships)",
+    )
     created_at: datetime = Field(..., description="Creation timestamp from Gardener cycle")
 
 
