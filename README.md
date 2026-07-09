@@ -13,16 +13,28 @@ I wanted the opposite of a transcript. A transcript is a wall of text you have t
 
 ## Quick start (MVP demo)
 
-You'll need Docker Desktop, Node.js 18+, and Python 3.11+.
+Works on Windows, macOS, and Linux. You'll need Docker (Desktop or Engine), Node.js 18+, and Python 3.11+.
 
-1. Copy `.env.example` to `.env` and set:
+1. Copy `.env.example` to `.env` (PowerShell: `Copy-Item .env.example .env`) and set:
    ```
    NEO4J_URI=neo4j://127.0.0.1:7687
    NEO4J_PASSWORD=<your_password>
    GEMINI_API_KEY=<your_key>
    ```
-2. Start everything: `.\scripts\start_mvp.ps1` — add `-FakeMode` to run offline with canned data (no API key needed).
-3. Open the frontend and start talking.
+   The start scripts refuse to run while `.env` still holds placeholder values.
+2. Start everything — Neo4j and Redis in Docker, the backend on port 8010, the frontend on port 3000:
+
+   ```bash
+   # Linux / macOS
+   bash scripts/start_mvp.sh            # add --fake-mode to run offline, no API key needed
+   ```
+   ```powershell
+   # Windows
+   .\scripts\start_mvp.ps1              # add -FakeMode to run offline, no API key needed
+   ```
+
+   Prefer it stepwise? The Makefile breaks the same thing into pieces: `make setup` (venv + `pip install -e 'backend[dev]'` + `npm install`), `make up` (Neo4j + Redis), `make backend`, `make frontend`, `make demo-fake`, `make test`, `make down`.
+3. Open http://localhost:3000 and start talking.
 
 To verify the stack end to end, there's a smoke test (`python backend/scripts/smoke_test.py`) and a full walkthrough in the runbook at `_docs/_runbook/MVP_DEMO.md`.
 
@@ -30,9 +42,11 @@ To verify the stack end to end, there's a smoke test (`python backend/scripts/sm
 
 - **`backend/`** — a FastAPI service running two agents: a **Builder** that extracts entities and relationships from the incoming speech, and a **Gardener** that continuously reorganises the graph as it grows.
 - **`frontend/`** — a Next.js app that streams updates live and renders the graph, with filters and exports.
-- **`docker/`** — Neo4j and the supporting services, orchestrated so the whole thing comes up with one command.
-
-Planning docs, specifications, and prior-art research live under `_docs/`, `_dev/`, and `_discovery/`.
+- **`docker/`** — Neo4j and Redis, orchestrated so the whole thing comes up with one command.
+- **`scripts/`** — startup helpers for both platforms (`start_mvp.sh`, `start_mvp.ps1`), plus one-off debug utilities kept under `scripts/diagnostics/`. A repo-root `Makefile` wraps the same steps.
+- **`_docs/`** — the project's documentation: architecture, ADRs, runbooks, audits, and evidence.
+- **`_dev/`** — development notes and working material.
+- **`_discovery/`** — prior-art research, including the build-vs-adopt analysis at `_discovery/_repo/_INDEX.md`.
 
 ## Decisions, logged as they happen
 

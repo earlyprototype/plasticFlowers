@@ -8,7 +8,7 @@
 *   **Architecture:** Event-driven, service-oriented.
     *   **Backend:** FastAPI (Python) handles orchestration, connection to Neo4j, and Gemini agent management.
     *   **Frontend:** Next.js (React) visualizes the graph via Cytoscape.js, receiving updates via Server-Sent Events (SSE).
-    *   **AI:** Google Gemini (1.5/2.x/3.x) via the new `google-genai` SDK. It performs entity extraction, semantic deduplication, and graph refinement.
+    *   **AI:** Google Gemini (default `gemini-2.5-flash`) via the new `google-genai` SDK. It performs entity extraction, semantic deduplication, and graph refinement.
     *   **Persistence:** Neo4j stores the graph topology and vector embeddings.
 
 ## Repository Structure
@@ -20,9 +20,11 @@
 *   `frontend/`: Next.js TypeScript application.
     *   `src/components/`: UI components (likely GraphCanvas).
     *   `src/hooks/`: Custom hooks like `useSSE` for real-time updates.
-*   `docker/`: Docker Compose configuration for Neo4j.
-*   `_docs/`: Comprehensive project documentation, plans, and evidence.
-*   `scripts/`: Automation scripts for startup and maintenance.
+*   `docker/`: Docker Compose configuration for Neo4j and Redis.
+*   `scripts/`: Automation scripts for startup and maintenance (ad-hoc debug utilities under `scripts/diagnostics/`).
+*   `_docs/`: Comprehensive project documentation, plans, runbooks, audits, and evidence.
+*   `_dev/`: Development notes and working material.
+*   `_discovery/`: Prior-art and build-vs-adopt research (see `_discovery/_repo/_INDEX.md`).
 
 ## Building and Running
 
@@ -33,32 +35,35 @@
 *   **Google Gemini API Key**
 
 ### Interactive Startup (Recommended)
-Use the provided PowerShell script to launch the full stack (Neo4j, Backend, Frontend):
+Use the provided scripts to launch the full stack (Neo4j, Redis, Backend, Frontend):
+
+```bash
+# Linux / macOS — add --fake-mode for mock LLM responses (offline testing)
+bash scripts/start_mvp.sh
+```
 
 ```powershell
-# Run with real Gemini API
+# Windows — add -FakeMode for mock LLM responses (offline testing)
 .\scripts\start_mvp.ps1
-
-# Run in FAKE mode (mock LLM responses for offline testing)
-.\scripts\start_mvp.ps1 -FakeMode
 ```
+
+A repo-root `Makefile` offers the same steps individually: `make setup`, `make up`, `make backend`, `make frontend`, `make demo-fake`, `make test`, `make down`.
 
 ### Manual Setup
 
-**1. Database (Neo4j)**
+**1. Databases (Neo4j + Redis)** — run from the repo root so compose reads the root `.env`:
 ```bash
-cd docker
-docker compose up -d
+docker compose -f docker/docker-compose.yml --env-file .env up -d
 ```
 
-**2. Backend**
+**2. Backend** — from the repo root:
 ```bash
-cd backend
 # Create/Activate venv
-# Install dependencies
-pip install .
+python -m venv .venv && . .venv/bin/activate   # Windows: .venv\Scripts\Activate.ps1
+# Install dependencies (single source of truth: backend/pyproject.toml)
+pip install -e 'backend[dev]'
 # Run Server
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
+cd backend && python -m uvicorn app.main:app --host 127.0.0.1 --port 8010 --reload
 ```
 *Note: Ensure `.env` is configured with `NEO4J_URI`, `NEO4J_PASSWORD`, and `GEMINI_API_KEY`.*
 
@@ -73,8 +78,8 @@ npm run dev
 ## Development Conventions
 
 *   **Architecture Pattern:** "Builder vs. Gardener".
-    *   *Builder:* Optimistic, fast, additive updates (keeps up with speech). Uses "Flash" models.
-    *   *Gardener:* Asynchronous, slow, refining updates (merges, prunes, clusters). Uses "Pro" models for higher reasoning.
+    *   *Builder:* Optimistic, fast, additive updates (keeps up with speech). Uses `gemini-2.5-flash`.
+    *   *Gardener:* Asynchronous, slower, refining updates (merges, prunes, clusters). Also uses `gemini-2.5-flash` (chosen over Pro for higher free-tier rate limits — see `config.py`).
 *   **State Management:** The Backend is the source of truth (Neo4j). The Frontend is a projection, kept in sync via SSE.
 *   **Code Style:**
     *   **Python:** Typed (Pydantic models), AsyncIO-heavy. Follows PEP 8.
@@ -93,16 +98,16 @@ The core of **plasticFlower**'s intelligence is powered by Google Gemini, implem
 
 The system uses a bimodal agent strategy to balance latency and reasoning quality:
 
-| Agent | Purpose | Recommended Model | Characteristics |
-|-------|---------|-------------------|-----------------|
-| **Builder** | Real-time extraction | `gemini-2.0-flash` | High speed, low latency, additive. |
-| **Gardener** | Graph refinement | `gemini-1.5-pro` | Higher reasoning for merging and clustering. |
+| Agent | Purpose | Default Model | Characteristics |
+|-------|---------|---------------|-----------------|
+| **Builder** | Real-time extraction | `gemini-2.5-flash` | High speed, low latency, additive. |
+| **Gardener** | Graph refinement | `gemini-2.5-flash` | Same flash model — chosen for higher rate limits on the free tier. |
 
 ### Configuration (`config.py`)
 Settings are managed via Pydantic:
-- `gemini_model_builder`: Defaults to Flash models for speed.
-- `gemini_model_gardener`: Defaults to Pro models for complex transcript context analysis.
-- `gemini_temperature`: Typically set low (0.2) for deterministic structural extraction.
+- `gemini_model_builder`: Defaults to `gemini-2.5-flash` (high-volume extraction).
+- `gemini_model_gardener`: Defaults to `gemini-2.5-flash` (flash chosen for higher free-tier rate limits).
+- `gemini_temperature`: Defaults to 0.2 for deterministic structural extraction.
 
 ## 🔌 SDK and Connectivity
 
@@ -117,7 +122,7 @@ The backend (`backend/app/services/llm.py`) uses the `genai.Client` which suppor
 Before creating a new node, the **Builder** performs a similarity check (`backend/app/services/similarity.py`):
 - **Model:** `text-embedding-004` (768 dimensions).
 - **Process:** The concept label is embedded and compared against existing nodes in the Neo4j vector index.
-- **Threshold:** `0.85` (cosine similarity). If a match is found, the system increments the `mentions` count of the existing node instead of creating a duplicate.
+- **Threshold:** `0.92` (cosine similarity — `config.py` `similarity_threshold`, tuned via ADR-0008). If a match is found, the system increments the `mentions` count of the existing node instead of creating a duplicate.
 
 ## 🛠️ Developer Tools
 
@@ -147,7 +152,7 @@ For offline development or to save on token costs, set `PLASTICFLOWER_FAKE_LLM=1
     *   `BuilderAgent` uses Gemini to extract entities and relationships, marking them as **`status: GHOST`** (tentative).
     *   These "Ghost" nodes are immediately persisted to Neo4j and broadcast via SSE (`node_added`, `relationship_added`).
 3.  **Refinement (Gardener Loop):**
-    *   A background scheduler triggers the `GardenerAgent` periodically.
+    *   A background scheduler triggers the `GardenerAgent` on a **ratio basis**: one Gardener run per 5 Builder chunks (`builder_gardener_ratio`, ADR-0010), with a 5-second safety debounce.
     *   `GardenerAgent` analyzes the full graph state to confirm/prune ghosts, merge duplicates, and cultivate **"Flowers"**.
     *   Mutations are persisted and broadcast via SSE (`node_merged`, `flower_updated`, `flower_dissolved`).
 4.  **Visualization (Organic Layout):**
@@ -165,7 +170,7 @@ For offline development or to save on token costs, set `PLASTICFLOWER_FAKE_LLM=1
 ### Frontend (`frontend/`)
 *   **`src/hooks/useSpeechRecognition.ts`:** Continuous audio capture using cursor-based chunking.
 *   **`src/hooks/useSSE.ts`:** Resilient event consumer with exponential backoff and connection watchdog.
-*   **`src/components/graph/GraphCanvas.tsx`:** The "Living" Graph UI using `applyOrganicPositioning` for custom "flower fan" layouts.
+*   **`src/components/graph/GraphCanvas.tsx`:** The "Living" Graph UI using fcose layout plus `applyAdaptiveStemPetalPositioning` for custom "flower fan" layouts.
 
 ---
 
@@ -176,7 +181,7 @@ The **Gardener** is the AI curator that runs in the background to tidy up the kn
 ## 🔄 The Gardener Cycle
 
 ### Trigger Conditions
-Runs every ~24 seconds when recent builder activity has occurred and ghost nodes exist.
+Ratio-based (ADR-0010): the Builder publishes a Gardener trigger event after every 5 processed chunks (`builder_gardener_ratio = 5` in `config.py`); a 5-second safety debounce prevents rapid consecutive runs per session. There is no fixed wall-clock interval.
 
 ### The Process
 
@@ -198,10 +203,11 @@ Flowers organize nodes by theme. The LLM follows strict rules:
 
 ## 🎨 Visual Behaviors
 
-The frontend visualizes Gardener actions through specific animations:
-*   **Ghost → Solid:** 400ms smooth transition in color/border.
-*   **New Relationships:** 2000ms fade + draw effect.
-*   **Flower Formation:** Nodes animate to positions around their "stem" (1200ms), and the stem node grows larger.
-*   **Camera:** Smoothly pans/zooms (2500ms) after changes settle.
+The frontend visualizes Gardener actions through specific animations (see `animationController.ts` / `layoutConfig.ts`):
+*   **Ghost → Solid:** 300ms style transition in colour/border.
+*   **New Nodes/Relationships:** 800ms fade-in, starting 400ms into the camera move.
+*   **Flower Formation:** Members are positioned around their "stem" node in an orbit (radius `80 + members*15`).
+*   **Camera:** Smoothly pans/zooms (1200ms) after changes settle.
+*   **Isolated nodes:** gentle 3000ms float cycle until they gain connections.
 
 These animations represent the AI's semantic decisions being applied to the graph in real-time.
