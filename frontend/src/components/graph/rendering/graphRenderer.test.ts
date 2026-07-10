@@ -47,7 +47,6 @@ describe('graphRenderer', () => {
       const layoutResult: LayoutResult = {
         nodePositions: new Map(),
         lockedNodeIds: new Set(),
-        isolatedNodeIds: new Set(),
         flowerStructureChanged: false,
       };
 
@@ -72,7 +71,6 @@ describe('graphRenderer', () => {
       const layoutResult: LayoutResult = {
         nodePositions: new Map(),
         lockedNodeIds: new Set(),
-        isolatedNodeIds: new Set(),
         flowerStructureChanged: false,
       };
 
@@ -111,7 +109,6 @@ describe('graphRenderer', () => {
       const layoutResult: LayoutResult = {
         nodePositions: new Map(),
         lockedNodeIds: new Set(),
-        isolatedNodeIds: new Set(),
         flowerStructureChanged: false,
       };
 
@@ -167,7 +164,6 @@ describe('graphRenderer', () => {
       const layoutResult: LayoutResult = {
         nodePositions: new Map(),
         lockedNodeIds: new Set(),
-        isolatedNodeIds: new Set(),
         flowerStructureChanged: true,
       };
 
@@ -220,7 +216,6 @@ describe('graphRenderer', () => {
       const layoutResult: LayoutResult = {
         nodePositions: new Map(),
         lockedNodeIds: new Set(),
-        isolatedNodeIds: new Set(),
         flowerStructureChanged: true,
       };
 
@@ -266,7 +261,6 @@ describe('graphRenderer', () => {
       const layoutResult: LayoutResult = {
         nodePositions: new Map(),
         lockedNodeIds: new Set(),
-        isolatedNodeIds: new Set(),
         flowerStructureChanged: false,
       };
 
@@ -294,7 +288,6 @@ describe('graphRenderer', () => {
     const emptyLayoutResult = (): LayoutResult => ({
       nodePositions: new Map(),
       lockedNodeIds: new Set(),
-      isolatedNodeIds: new Set(),
       flowerStructureChanged: false,
     });
 
@@ -421,7 +414,6 @@ describe('graphRenderer', () => {
       const layoutResult: LayoutResult = {
         nodePositions: new Map(),
         lockedNodeIds: new Set(),
-        isolatedNodeIds: new Set(),
         flowerStructureChanged: false,
       };
 
@@ -498,7 +490,6 @@ describe('graphRenderer', () => {
       const layoutResult: LayoutResult = {
         nodePositions: new Map(),
         lockedNodeIds: new Set(),
-        isolatedNodeIds: new Set(),
         flowerStructureChanged: false,
       };
 
@@ -562,7 +553,6 @@ describe('graphRenderer', () => {
       const layoutResult: LayoutResult = {
         nodePositions: new Map(),
         lockedNodeIds: new Set(),
-        isolatedNodeIds: new Set(),
         flowerStructureChanged: false,
       };
 
@@ -602,7 +592,6 @@ describe('graphRenderer', () => {
       let layoutResult: LayoutResult = {
         nodePositions: new Map(),
         lockedNodeIds: new Set(),
-        isolatedNodeIds: new Set(),
         flowerStructureChanged: false,
       };
 
@@ -659,7 +648,6 @@ describe('graphRenderer', () => {
     const emptyLayout = (): LayoutResult => ({
       nodePositions: new Map(),
       lockedNodeIds: new Set(),
-      isolatedNodeIds: new Set(),
       flowerStructureChanged: false,
     });
 
@@ -795,7 +783,6 @@ describe('graphRenderer', () => {
     const emptyLayout = (): LayoutResult => ({
       nodePositions: new Map(),
       lockedNodeIds: new Set(),
-      isolatedNodeIds: new Set(),
       flowerStructureChanged: false,
     });
 
@@ -848,6 +835,52 @@ describe('graphRenderer', () => {
       syncGraphStructure(cy, { nodes: [broken], relationships: [], flowers: [] }, emptyLayout());
       expect(cy.getElementById('n1').data('birthColor')).toBe(BIRTH_DAWN);
     });
+
+    it('anchors the window on options.sessionStartMs (prop beats inference)', () => {
+      // Only a mid-session node is synced (the dawn node is filtered out of
+      // the view) — inference alone would wrongly make it the session start.
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('n-mid', SESSION_HUE_SPAN_MS / 2)], relationships: [], flowers: [] },
+        emptyLayout(),
+        { sessionStartMs: startMs }
+      );
+      expect(cy.getElementById('n-mid').data('birthColor')).toBe(BIRTH_MOSS);
+    });
+
+    it('ignores a non-finite sessionStartMs and falls back to inference', () => {
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('n1', 0)], relationships: [], flowers: [] },
+        emptyLayout(),
+        { sessionStartMs: Number.NaN }
+      );
+      expect(cy.getElementById('n1').data('birthColor')).toBe(BIRTH_DAWN);
+    });
+
+    it('stamps birth colours only at creation — updates never repaint', () => {
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('n1', SESSION_HUE_SPAN_MS / 2)], relationships: [], flowers: [] },
+        emptyLayout(),
+        { sessionStartMs: startMs }
+      );
+      expect(cy.getElementById('n1').data('birthColor')).toBe(BIRTH_MOSS);
+      expect(cy.getElementById('n1').data('birthFill')).toBe(birthFill(BIRTH_MOSS));
+
+      // Re-sync with a shifted anchor (simulating anchor drift, e.g. the
+      // fallback inference changing as the visible set changes): the existing
+      // node must keep the colour of its birth moment.
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('n1', SESSION_HUE_SPAN_MS / 2)], relationships: [], flowers: [] },
+        emptyLayout(),
+        { sessionStartMs: startMs + SESSION_HUE_SPAN_MS / 2 }
+      );
+      expect(cy.getElementById('n1').data('birthColor')).toBe(BIRTH_MOSS);
+      expect(cy.getElementById('n1').data('birthFill')).toBe(birthFill(BIRTH_MOSS));
+      expect(cy.getElementById('n1').data('birthGhost')).toBe(birthGhostTint(BIRTH_MOSS));
+    });
   });
 
   describe('stem node styling', () => {
@@ -891,7 +924,6 @@ describe('graphRenderer', () => {
       const layoutResult: LayoutResult = {
         nodePositions: new Map(),
         lockedNodeIds: new Set(),
-        isolatedNodeIds: new Set(),
         flowerStructureChanged: true,
       };
 

@@ -1,5 +1,6 @@
 import type { Core } from 'cytoscape';
 
+import type { Flower, Node } from '../../../lib/types';
 import {
   CARTOGRAPHY_PALETTE,
   NEATLINE_INNER_WIDTH,
@@ -11,6 +12,9 @@ import {
   PORTRAIT_TITLE_FONT,
   birthRampStops,
   buildPortraitTitleBlock,
+  defaultPortraitTitle,
+  formatPortraitDate,
+  formatSessionDuration,
   neatlineRects,
   portraitLegendLayout,
 } from '../config/cartography';
@@ -38,6 +42,44 @@ export interface PortraitInfo {
   conceptCount: number;
   /** Flower/island count. */
   islandCount: number;
+}
+
+/**
+ * Build the title-block content from live data. MUST be fed the UNFILTERED
+ * node/flower lists: the plate documents the whole session — concept/island
+ * counts and the duration line never shrink because a UI filter is active.
+ * Duration runs from the earliest node birth to the latest (or to the
+ * session end when known). Pure — unit-tested in portraitOverlay.test.ts.
+ */
+export function computePortraitInfo(args: {
+  /** UNFILTERED session nodes. */
+  nodes: Node[];
+  /** UNFILTERED session flowers. */
+  flowers: Flower[];
+  /** Custom plate title; falls back to 'Session <short-id>'. */
+  portraitTitle?: string;
+  sessionId?: string;
+  /** ISO end time (if the session ended) — extends the duration line. */
+  sessionEndedAt?: string | null;
+}): PortraitInfo {
+  let earliest = Number.POSITIVE_INFINITY;
+  let latest = Number.NEGATIVE_INFINITY;
+  for (const node of args.nodes) {
+    const ms = Date.parse(node.created_at);
+    if (!Number.isFinite(ms)) continue;
+    if (ms < earliest) earliest = ms;
+    if (ms > latest) latest = ms;
+  }
+  const endedMs = args.sessionEndedAt ? Date.parse(args.sessionEndedAt) : Number.NaN;
+  if (Number.isFinite(endedMs) && endedMs > latest) latest = endedMs;
+  const hasSpan = Number.isFinite(earliest) && latest >= earliest;
+  return {
+    title: args.portraitTitle?.trim() || defaultPortraitTitle(args.sessionId),
+    dateLabel: formatPortraitDate(hasSpan ? earliest : Date.now()),
+    durationLabel: hasSpan ? formatSessionDuration(latest - earliest) : '—',
+    conceptCount: args.nodes.filter((n) => n.status === 'solid').length,
+    islandCount: args.flowers.length,
+  };
 }
 
 export interface PortraitOverlay {

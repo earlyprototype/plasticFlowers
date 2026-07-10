@@ -22,6 +22,8 @@ import {
   BIRTH_AMBER,
   BIRTH_DAWN,
   BIRTH_MOSS,
+  BIRTH_PAPER,
+  CARTOGRAPHY_PALETTE,
   SESSION_HUE_SPAN_MS,
   isCartographyEnabled,
 } from '../../../components/graph/config/cartography';
@@ -384,10 +386,10 @@ export default function CanvasDevPage() {
             style={{
               fontSize: '12px',
               padding: '4px 12px',
-              border: '1px solid #A8A29E',
+              border: `1px solid ${CARTOGRAPHY_PALETTE.coast}`,
               borderRadius: '4px',
-              background: portrait ? '#44403C' : '#FFFFFF',
-              color: portrait ? '#FFFFFF' : '#44403C',
+              background: portrait ? CARTOGRAPHY_PALETTE.ink : BIRTH_PAPER,
+              color: portrait ? BIRTH_PAPER : CARTOGRAPHY_PALETTE.ink,
               cursor: 'pointer',
             }}
           >

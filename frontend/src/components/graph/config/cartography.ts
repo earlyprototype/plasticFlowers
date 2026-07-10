@@ -377,6 +377,19 @@ export function defaultPortraitTitle(sessionId?: string | null): string {
   return `Session ${id.length > 12 ? id.slice(0, 8) : id}`;
 }
 
+/**
+ * Filename for the saved portrait PNG: short session id, or today's date
+ * when no session id is known. `now` is injectable for tests.
+ */
+export function portraitExportFilename(
+  sessionId?: string | null,
+  now: () => Date = () => new Date()
+): string {
+  const id = sessionId?.trim();
+  const stamp = id ? id.slice(0, 8) : now().toISOString().slice(0, 10);
+  return `plasticflowers-portrait-${stamp}.png`;
+}
+
 /** 'N concepts across M islands · plasticFlowers' (singulars handled). */
 export function portraitStatsLine(conceptCount: number, islandCount: number): string {
   const concepts = `${conceptCount} ${conceptCount === 1 ? 'concept' : 'concepts'}`;

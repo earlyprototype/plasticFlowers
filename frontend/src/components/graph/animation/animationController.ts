@@ -1,4 +1,4 @@
-import type { Core, EdgeSingular, NodeSingular } from 'cytoscape';
+import type { Core, CollectionReturnValue, EdgeSingular, NodeSingular } from 'cytoscape';
 import type { SyncResult } from '../rendering/graphRenderer';
 import { PENDING_REMOVAL_SCRATCH, type PendingRemovalHandle } from '../rendering/graphRenderer';
 import { CARTOGRAPHY_PALETTE, isCartographyEnabled } from '../config/cartography';
@@ -14,7 +14,7 @@ import { CARTOGRAPHY_PALETTE, isCartographyEnabled } from '../config/cartography
  *   the stylesheet transitions the node to its solid styling. One pulse per
  *   confirmation — graphRenderer only reports ids on the actual class flip.
  * - WILT (node removed/pruned): desaturate toward the terrain tone, shrink
- *   to ~0.35 scale, sink ~6px and fade over ~900ms, THEN remove the element.
+ *   to ~0.35 scale and fade over ~900ms, THEN remove the element.
  *
  * The grammar runs regardless of the cartography flag: it is motion, not
  * palette. (The wilt desaturation target is the cartography terrain tone,
@@ -24,10 +24,21 @@ import { CARTOGRAPHY_PALETTE, isCartographyEnabled } from '../config/cartography
  * nodes/edges appear at stylesheet styling, confirmations restyle without a
  * pulse, removals are immediate.
  *
+ * Portrait mode (Move 5): while `setPortrait(true)` is active the plate must
+ * stay calm — the controller runs NO verbs (elements snap to their final
+ * states via the same instant path as reduced motion) and the growth-sequence
+ * camera fit is suppressed entirely. Portrait entry drives its own camera fit
+ * through `startCameraFit` explicitly.
+ *
  * Sequencing is timer-based (setTimeout), not animate-complete based: in
  * headless Cytoscape (tests) the animation loop never ticks, so completion
  * callbacks would never fire. Timers keep the choreography deterministic
  * under fake timers; the visual tween runs alongside in the browser.
+ * All sprouts in one sync share the same phase instants, so each sync arms
+ * ONE timer per beat which fans out to every element awaiting it; every
+ * choreography timer is tracked and cleared by stopAll(). An element that
+ * starts WILTING mid-sprout makes its remaining sprout phases bail (checked
+ * per beat), so a wilt tween is never snapped back to full styling.
  *
  * T9 lesson (keep!): every inline style set for an animation is removed once
  * the verb finishes, so stylesheet rules (e.g. `node.ghost { opacity }`)
@@ -43,9 +54,10 @@ export const BLOOM_MS = 600;
 /** Removal wilt duration (ms) — element is removed from the graph after this. */
 export const WILT_MS = 900;
 
-/** Wilt geometry: final scale and vertical sink. */
+/** Wilt geometry: final scale. (No position sink — a wilting node stays put,
+ * so it neither drags the camera/layout nor storms the terrain redraw with
+ * per-frame position events.) */
 const WILT_SCALE = 0.35;
-const WILT_SINK_PX = 6;
 
 /**
  * Ring-pulse ink fallback — the surveyed-sepia stem accent. With cartography
@@ -54,6 +66,16 @@ const WILT_SINK_PX = 6;
  * covers legacy mode and nodes without a stamped colour.
  */
 const BLOOM_COLOR = '#A98F5A';
+
+/** Options for a camera fit (portrait entry passes its own frame). */
+export interface CameraFitOptions {
+  /** Elements to frame; defaults to all elements. '.wilting' is always excluded. */
+  eles?: CollectionReturnValue;
+  /** Fit padding in px (default 50). */
+  padding?: number;
+  /** Tween duration in ms (default 1200). */
+  duration?: number;
+}
 
 /**
  * System reduced-motion preference. Guarded for non-browser environments
@@ -76,8 +98,15 @@ export class AnimationController {
   /** Deferred-removal timers for wilting elements, keyed by element id. */
   private readonly wiltTimers = new Map<string, ReturnType<typeof setTimeout>>();
 
-  /** Cleanup timers for bloom pulses (inline overlay style removal). */
-  private readonly bloomTimers = new Set<ReturnType<typeof setTimeout>>();
+  /**
+   * Every other choreography timer: shared sprout phase beats and bloom
+   * cleanup timers. Batch-level record — stopAll() clears the lot, so an
+   * unmount mid-sprout leaves nothing armed.
+   */
+  private readonly choreographyTimers = new Set<ReturnType<typeof setTimeout>>();
+
+  /** Portrait plate presented — all verbs snap, growth camera fits are suppressed. */
+  private portraitActive = false;
 
   constructor(options: { prefersReducedMotion?: () => boolean } = {}) {
     this.prefersReducedMotion = options.prefersReducedMotion ?? systemPrefersReducedMotion;
@@ -88,25 +117,53 @@ export class AnimationController {
     return this.wiltTimers.size;
   }
 
+  /** Number of live choreography timers (exposed for tests/diagnostics). */
+  get pendingChoreographyCount(): number {
+    return this.choreographyTimers.size;
+  }
+
+  /**
+   * Toggle portrait mode (Move 5). While active, every verb takes its
+   * instant final-state path (the reduced-motion behaviour) and
+   * executeAnimationSequence never moves the camera — the plate stays calm.
+   */
+  setPortrait(active: boolean): void {
+    this.portraitActive = active;
+  }
+
+  /** Verbs snap to final states instantly (reduced motion or portrait). */
+  private instantVerbs(): boolean {
+    return this.portraitActive || this.prefersReducedMotion();
+  }
+
   /**
    * Execute the growth sequence for one sync:
    * camera moves first (non-blocking), confirmed ghosts bloom, and new
    * elements sprout (stem edge extends, then the node scales in).
+   * While portrait is active the camera is NOT touched (the plate keeps the
+   * framing chosen on portrait entry) and the verbs snap instantly.
    */
   async executeAnimationSequence(cy: Core, syncResult: SyncResult): Promise<void> {
-    this.startCameraFit(cy);
+    if (!this.portraitActive) {
+      this.startCameraFit(cy);
+    }
     this.bloom(cy, syncResult.confirmedNodeIds);
     await this.sprout(cy, syncResult.addedNodeIds, syncResult.addedEdgeIds);
   }
 
   /**
-   * Start camera fit animation (non-blocking; instant under reduced motion).
+   * Start a camera fit animation (non-blocking; instant under reduced
+   * motion; supersedes any queued viewport animation). Mid-wilt elements are
+   * excluded from the frame — a departing node must not stretch the camera.
+   * Also used directly for the portrait-entry fit via `options`.
    */
-  private startCameraFit(cy: Core): void {
-    if (cy.elements().length === 0) return;
+  startCameraFit(cy: Core, options: CameraFitOptions = {}): void {
+    const eles = (options.eles ?? cy.elements()).not('.wilting');
+    if (eles.length === 0) return;
+    const padding = options.padding ?? 50;
 
     if (this.prefersReducedMotion()) {
-      cy.fit(cy.elements(), 50);
+      cy.fit(eles, padding);
       return;
     }
 
@@ -115,13 +172,10 @@ export class AnimationController {
     // beats behind the data. Supersede any in-flight/queued fit instead.
     cy.stop(true);
     cy.animate(
+      { fit: { eles, padding } },
       {
-        fit: { eles: cy.elements(), padding: 50 },
-        duration: this.CAMERA_DURATION,
+        duration: options.duration ?? this.CAMERA_DURATION,
         easing: 'ease-in-out',
-      },
-      {
-        duration: this.CAMERA_DURATION,
       }
     );
   }
@@ -138,7 +192,9 @@ export class AnimationController {
    * beat if they connect newly added nodes (so they never point at nothing).
    *
    * Everything new is hidden synchronously before the first await so nothing
-   * flashes at full styling before its cue.
+   * flashes at full styling before its cue. All elements share the batch's
+   * phase beats (one timer per instant); each phase re-checks that its
+   * element is still alive and not wilting before touching styles.
    */
   private async sprout(
     cy: Core,
@@ -147,9 +203,9 @@ export class AnimationController {
   ): Promise<void> {
     if (cy.destroyed()) return;
     if (addedNodeIds.size === 0 && addedEdgeIds.size === 0) return;
-    // Reduced motion: elements were added at their stylesheet styling — the
-    // instant final state IS the sprout.
-    if (this.prefersReducedMotion()) return;
+    // Reduced motion / portrait: elements were added at their stylesheet
+    // styling — the instant final state IS the sprout.
+    if (this.instantVerbs()) return;
 
     // Flower compounds don't sprout: their visual is the terrain island (or a
     // near-invisible rectangle) whose size derives from children.
@@ -182,22 +238,55 @@ export class AnimationController {
       if (stem) stemEdgeByNode.set(node.id(), stem);
     });
 
+    // One shared timer per phase instant for the whole batch (armed NOW, so
+    // every element's beats measure from the same t0).
+    const at = this.armBatchBeats([
+      SPROUT_NODE_MS,
+      SPROUT_EDGE_MS,
+      SPROUT_EDGE_MS + SPROUT_NODE_MS,
+      SPROUT_EDGE_MS + SPROUT_NODE_MS + SPROUT_EDGE_MS,
+    ]);
+
     const promises: Promise<void>[] = [];
 
     newNodes.forEach((node) => {
       const stemEdge = stemEdgeByNode.get(node.id()) ?? null;
-      promises.push(this.sproutNode(cy, node, stemEdge));
+      promises.push(this.sproutNode(cy, node, stemEdge, at));
     });
 
     newEdges.forEach((edge) => {
       if (assignedEdgeIds.has(edge.id())) return; // grows as part of a node's sprout
       const touchesNewNode =
         addedNodeIds.has(edge.source().id()) || addedNodeIds.has(edge.target().id());
-      const delay = touchesNewNode ? SPROUT_EDGE_MS + SPROUT_NODE_MS : 0;
-      promises.push(this.growEdge(cy, edge, delay));
+      const startAt = touchesNewNode ? SPROUT_EDGE_MS + SPROUT_NODE_MS : 0;
+      promises.push(this.growEdge(cy, edge, startAt, at));
     });
 
     await Promise.all(promises);
+  }
+
+  /**
+   * Arm the shared phase beats of one sprout batch. Returns `at(instantMs)`
+   * resolving when that instant (measured from now) is reached. All timers
+   * are tracked in `choreographyTimers`; stopAll() clears them (the pending
+   * awaits then simply never resume — their component is gone).
+   */
+  private armBatchBeats(instantsMs: number[]): (instantMs: number) => Promise<void> {
+    const beats = new Map<number, Promise<void>>();
+    for (const instant of instantsMs) {
+      if (beats.has(instant)) continue;
+      beats.set(
+        instant,
+        new Promise((resolve) => {
+          const timer = setTimeout(() => {
+            this.choreographyTimers.delete(timer);
+            resolve();
+          }, instant);
+          this.choreographyTimers.add(timer);
+        })
+      );
+    }
+    return (instantMs: number) => beats.get(instantMs) ?? Promise.resolve();
   }
 
   /**
@@ -231,17 +320,25 @@ export class AnimationController {
     return chosen;
   }
 
+  /** True when a sprout phase must not touch the element any more. */
+  private sproutBailed(ele: NodeSingular | EdgeSingular): boolean {
+    return ele.removed() || ele.hasClass('wilting');
+  }
+
   /** Grow the stem edge (if any), then scale the node in. */
   private async sproutNode(
     cy: Core,
     node: NodeSingular,
-    stemEdge: EdgeSingular | null
+    stemEdge: EdgeSingular | null,
+    at: (instantMs: number) => Promise<void>
   ): Promise<void> {
     if (stemEdge) {
-      await this.growEdge(cy, stemEdge, 0);
+      await this.growEdge(cy, stemEdge, 0, at);
       if (cy.destroyed()) return;
+      await this.scaleInNode(cy, node, SPROUT_EDGE_MS, at);
+    } else {
+      await this.scaleInNode(cy, node, 0, at);
     }
-    await this.scaleInNode(cy, node);
   }
 
   /**
@@ -249,13 +346,19 @@ export class AnimationController {
    * dash-offset sweep: with pattern [L, L] and offset animating L → 0 the
    * drawn segment extends from the source endpoint. The target arrow is
    * hidden during the sweep so the line doesn't point at nothing.
+   * `startAtMs` is the batch instant at which the sweep begins.
    */
-  private async growEdge(cy: Core, edge: EdgeSingular, delayMs: number): Promise<void> {
-    if (delayMs > 0) {
-      await this.delay(delayMs);
+  private async growEdge(
+    cy: Core,
+    edge: EdgeSingular,
+    startAtMs: number,
+    at: (instantMs: number) => Promise<void>
+  ): Promise<void> {
+    if (startAtMs > 0) {
+      await at(startAtMs);
       if (cy.destroyed()) return;
     }
-    if (edge.removed()) return;
+    if (this.sproutBailed(edge)) return;
 
     const src = edge.source().position();
     const tgt = edge.target().position();
@@ -276,8 +379,8 @@ export class AnimationController {
       { duration: SPROUT_EDGE_MS, easing: 'ease-out' }
     );
 
-    await this.delay(SPROUT_EDGE_MS);
-    if (cy.destroyed() || edge.removed()) return;
+    await at(startAtMs + SPROUT_EDGE_MS);
+    if (cy.destroyed() || this.sproutBailed(edge)) return;
     edge.stop(true, true);
     // Drop every inline style so stylesheet rules (e.g. inter-flower dashes,
     // base arrows) win again.
@@ -287,10 +390,20 @@ export class AnimationController {
   /**
    * Scale a node in from ~0 to its natural (label-derived) size over
    * SPROUT_NODE_MS with a subtle overshoot. The label fades back in with the
-   * stylesheet once the scale settles.
+   * stylesheet once the scale settles. `startAtMs` is the batch instant at
+   * which the scale-in begins.
    */
-  private async scaleInNode(cy: Core, node: NodeSingular): Promise<void> {
-    if (cy.destroyed() || node.removed()) return;
+  private async scaleInNode(
+    cy: Core,
+    node: NodeSingular,
+    startAtMs: number,
+    at: (instantMs: number) => Promise<void>
+  ): Promise<void> {
+    if (startAtMs > 0) {
+      await at(startAtMs);
+      if (cy.destroyed()) return;
+    }
+    if (this.sproutBailed(node)) return;
 
     const targetWidth = Math.max(node.width(), 4);
     const targetHeight = Math.max(node.height(), 4);
@@ -306,8 +419,8 @@ export class AnimationController {
       { duration: SPROUT_NODE_MS, easing: 'cubic-bezier(0.175, 0.885, 0.32, 1.275)' as 'ease-out' }
     );
 
-    await this.delay(SPROUT_NODE_MS);
-    if (cy.destroyed() || node.removed()) return;
+    await at(startAtMs + SPROUT_NODE_MS);
+    if (cy.destroyed() || this.sproutBailed(node)) return;
     node.stop(true, true);
     node.removeStyle('width height text-opacity');
   }
@@ -321,11 +434,11 @@ export class AnimationController {
    */
   private bloom(cy: Core, confirmedNodeIds: Set<string>): void {
     if (confirmedNodeIds.size === 0) return;
-    if (this.prefersReducedMotion()) return; // class flip restyles instantly
+    if (this.instantVerbs()) return; // class flip restyles instantly
 
     confirmedNodeIds.forEach((id) => {
       const node = cy.getElementById(id);
-      if (!node.nonempty() || !node.isNode()) return;
+      if (!node.nonempty() || !node.isNode() || node.hasClass('wilting')) return;
 
       const ringColor =
         (isCartographyEnabled() ? (node.data('birthColor') as string | undefined) : undefined) ??
@@ -343,11 +456,11 @@ export class AnimationController {
 
       // Cleanup slightly after the tween so we never yank a style mid-frame.
       const timer = setTimeout(() => {
-        this.bloomTimers.delete(timer);
+        this.choreographyTimers.delete(timer);
         if (cy.destroyed() || node.removed()) return;
         node.removeStyle('overlay-shape overlay-color overlay-opacity overlay-padding');
       }, BLOOM_MS + 50);
-      this.bloomTimers.add(timer);
+      this.choreographyTimers.add(timer);
     });
   }
 
@@ -356,12 +469,17 @@ export class AnimationController {
   /**
    * Wilt an element, then remove it. Passed to graphRenderer as the deferred
    * removal hook: the actual cy.remove() happens WILT_MS later (immediately
-   * under reduced motion). If the element is re-added to the data mid-wilt,
-   * graphRenderer calls the cancel handle stored in the element's scratch and
-   * the element is restored to stylesheet styling in place.
+   * under reduced motion or portrait). If the element is re-added to the data
+   * mid-wilt, graphRenderer calls the cancel handle stored in the element's
+   * scratch and the element is restored to stylesheet styling in place.
    *
-   * Nodes desaturate toward the terrain tone, shrink to WILT_SCALE, sink
-   * WILT_SINK_PX and fade; edges and flower compounds simply fade.
+   * A wilt starting mid-sprout takes over cleanly: the in-flight sprout tween
+   * is halted at its current visual state (stop without jumping) and the
+   * element's remaining sprout phases bail on the 'wilting' class.
+   *
+   * Nodes desaturate toward the terrain tone, shrink to WILT_SCALE and fade
+   * in place (no position sink — see WILT_SCALE note); edges and flower
+   * compounds simply fade.
    */
   wiltAndRemove(ele: NodeSingular | EdgeSingular): void {
     if (ele.removed()) return;
@@ -373,15 +491,19 @@ export class AnimationController {
       | undefined;
     if (existingHandle?.cancel) return; // already wilting
 
-    if (this.prefersReducedMotion()) {
+    if (this.instantVerbs()) {
       ele.removeScratch(PENDING_REMOVAL_SCRATCH);
       ele.remove();
       return;
     }
 
+    // Halt any in-flight verb tween (e.g. a sprout scale-in) WITHOUT jumping
+    // to its end state — the wilt animates from wherever the element is now.
+    // Pending sprout phase callbacks bail on the 'wilting' class added below.
+    ele.stop(true, false);
+
     const id = ele.id();
     const isPlainNode = ele.isNode() && !ele.hasClass('flower');
-    const originalPosition = ele.isNode() ? { ...(ele as NodeSingular).position() } : null;
 
     const cancel = () => {
       const timer = this.wiltTimers.get(id);
@@ -392,7 +514,9 @@ export class AnimationController {
       ele.removeScratch(PENDING_REMOVAL_SCRATCH);
       ele.removeClass('wilting');
       ele.removeStyle('opacity text-opacity width height background-color border-color');
-      if (originalPosition) (ele as NodeSingular).position(originalPosition);
+      // Revive at the element's CURRENT position: layout may have moved
+      // everything since the wilt began — snapping back to a stale
+      // wilt-start position would teleport the node.
     };
 
     const handle: PendingRemovalHandle = { ...(existingHandle ?? {}), cancel };
@@ -403,10 +527,6 @@ export class AnimationController {
       const node = ele as NodeSingular;
       node.animate(
         {
-          position: {
-            x: originalPosition!.x,
-            y: originalPosition!.y + WILT_SINK_PX,
-          },
           style: {
             width: Math.max(node.width() * WILT_SCALE, 1),
             height: Math.max(node.height() * WILT_SCALE, 1),
@@ -433,24 +553,19 @@ export class AnimationController {
   // --- Lifecycle --------------------------------------------------------------
 
   /**
-   * Stop all pending verb timers. Wilting elements are removed IMMEDIATELY
-   * (unmount must not leave zombie elements waiting on timers); if the core
-   * is already destroyed there is nothing left to remove.
+   * Stop all pending verb timers (wilt removals, sprout beats, bloom
+   * cleanups) — after this call NO controller timer is left alive. Wilting
+   * elements are removed IMMEDIATELY (unmount must not leave zombie elements
+   * waiting on timers); if the core is already destroyed there is nothing
+   * left to remove.
    */
   stopAll(cy: Core): void {
     this.wiltTimers.forEach((timer) => clearTimeout(timer));
     this.wiltTimers.clear();
-    this.bloomTimers.forEach((timer) => clearTimeout(timer));
-    this.bloomTimers.clear();
+    this.choreographyTimers.forEach((timer) => clearTimeout(timer));
+    this.choreographyTimers.clear();
     if (!cy.destroyed()) {
       cy.elements('.wilting').remove();
     }
-  }
-
-  /**
-   * Utility: delay helper
-   */
-  private delay(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 }

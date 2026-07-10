@@ -36,6 +36,7 @@ import {
   isCartographyEnabled,
   mixHex,
   neatlineRects,
+  portraitExportFilename,
   portraitLegendLayout,
   portraitStatsLine,
 } from './cartography';
@@ -357,6 +358,25 @@ describe('defaultPortraitTitle', () => {
   it('falls back when no session id exists', () => {
     expect(defaultPortraitTitle(undefined)).toBe('Session Portrait');
     expect(defaultPortraitTitle('  ')).toBe('Session Portrait');
+  });
+});
+
+describe('portraitExportFilename', () => {
+  it('stamps the short session id', () => {
+    expect(portraitExportFilename('0123456789abcdef')).toBe(
+      'plasticflowers-portrait-01234567.png'
+    );
+    expect(portraitExportFilename('  dev-canvas  ')).toBe(
+      'plasticflowers-portrait-dev-canv.png'
+    );
+  });
+
+  it("falls back to today's date without a session id", () => {
+    const now = () => new Date('2026-07-10T12:34:56Z');
+    expect(portraitExportFilename(undefined, now)).toBe(
+      'plasticflowers-portrait-2026-07-10.png'
+    );
+    expect(portraitExportFilename('   ', now)).toBe('plasticflowers-portrait-2026-07-10.png');
   });
 });
 

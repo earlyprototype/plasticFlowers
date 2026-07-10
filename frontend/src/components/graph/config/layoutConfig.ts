@@ -41,12 +41,10 @@ export const LAYOUT_CONFIG = {
   initialEnergyOnIncremental: 0.2, // Very gentle updates (was 0.3)
 } as const;
 
+// Growth verb + camera durations live in animation/animationController.ts
+// next to their implementations.
 export const ANIMATION_CONFIG = {
   debounceMs: 500, // Batch SSE updates
-  
-  // Camera-first timing (growth verb durations live in
-  // animation/animationController.ts next to their implementations)
-  cameraFitDuration: 1200, // Camera pan/zoom
 } as const;
 
 export const STYLE_CONFIG = [

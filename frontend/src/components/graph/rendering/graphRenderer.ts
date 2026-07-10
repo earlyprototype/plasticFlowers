@@ -53,6 +53,14 @@ export interface SyncOptions {
    * compound removes its children, which must not lag behind the data.
    */
   removeElement?: (ele: NodeSingular | EdgeSingular) => void;
+  /**
+   * Birth-colour anchor (ms since epoch): the session start. Prop beats
+   * inference — when supplied (ideally from the session record itself) the
+   * anchor is independent of whichever nodes happen to be in `data.nodes`
+   * (UI filters must never repaint history). Non-finite/absent values fall
+   * back to the earliest birth among the synced nodes.
+   */
+  sessionStartMs?: number;
 }
 
 /**
@@ -77,14 +85,18 @@ export function syncGraphStructure(
   const stemLookup = new Set(data.flowers.map((f) => f.stem_node_id).filter(Boolean));
   const flowerOrdinals = new Map(data.flowers.map((f, index) => [f.id, index]));
 
-  // Time-as-colour (Move 4): session start = earliest node birth currently in
-  // the graph. created_at is the truthful birth source — a real ISO datetime
-  // stamped by the backend — whereas timestamps[] are seconds relative to the
-  // session/page start, not absolute times. Colours are recomputed each sync
-  // but are deterministic in (created_at, sessionStart), and sessionStart is
-  // stable while the earliest node lives (backends only append later births),
-  // so existing nodes are never repainted as the session grows.
-  const sessionStartMs = earliestBirthMs(data.nodes);
+  // Time-as-colour (Move 4): the anchor is the session start, supplied by the
+  // caller (options.sessionStartMs, from the session record) so it does not
+  // depend on which nodes are currently synced — UI filters must never shift
+  // the window. Fallback: earliest node birth in this sync. created_at is the
+  // truthful birth source — a real ISO datetime stamped by the backend —
+  // whereas timestamps[] are seconds relative to the session/page start.
+  // Colours are stamped ONCE, when an element is created (stable by
+  // construction); updates never restamp, so history is never repainted.
+  const sessionStartMs =
+    options.sessionStartMs !== undefined && Number.isFinite(options.sessionStartMs)
+      ? options.sessionStartMs
+      : earliestBirthMs(data.nodes);
 
   // 1. Sync flowers (compound nodes)
   syncFlowers(cy, data.flowers, data.nodes, result);
@@ -237,16 +249,6 @@ function syncNodes(
     
     const parentId = node.flower_id ?? null;
 
-    // Time as colour: the node's birth hue over the fixed reference window
-    // (see the SPAN CONTRACT in config/cartography.ts). Always stamped as
-    // data; only the cartography stylesheet/verbs consume it, so with the
-    // flag off the legacy palette is untouched.
-    const nodeBirthColor = birthColor(
-      Date.parse(node.created_at),
-      sessionStartMs,
-      sessionStartMs + SESSION_HUE_SPAN_MS
-    );
-
     const elementData: Record<string, unknown> = {
       id: node.id,
       label: node.label,
@@ -256,11 +258,8 @@ function syncNodes(
       mentions: node.mentions || 0, // CRITICAL: needed for stem-petal positioning
       timestamps: node.timestamps || [], // Also useful for temporal styling
       inferred_type: node.inferred_type || 'concept',
-      birthColor: nodeBirthColor, // pure ramp colour (borders, bloom ring)
-      birthFill: birthFill(nodeBirthColor), // paper-mixed fill (label legibility)
-      birthGhost: birthGhostTint(nodeBirthColor), // reduced-strength ghost border tint
     };
-    
+
     const existing = cy.getElementById(node.id);
     if (existing && existing.nonempty()) {
       // Element re-appeared while departing — cancel the wilt and revive it
@@ -288,6 +287,19 @@ function syncNodes(
       
       result.updatedNodeIds.add(node.id);
     } else {
+      // Time as colour: the node's birth hue over the fixed reference window
+      // (see the SPAN CONTRACT in config/cartography.ts). Stamped ONLY at
+      // creation — the hue is a function of (created_at, session anchor),
+      // both immutable, so restamping on update would be pure waste and any
+      // anchor drift must never repaint existing nodes. Always stamped as
+      // data; only the cartography stylesheet/verbs consume it, so with the
+      // flag off the legacy palette is untouched.
+      const nodeBirthColor = birthColor(
+        Date.parse(node.created_at),
+        sessionStartMs,
+        sessionStartMs + SESSION_HUE_SPAN_MS
+      );
+
       // Create new node with a deterministic seed position: Cytoscape
       // defaults to (0,0), so a cold load (whole session in one sync) would
       // otherwise stack every node on the same point — a start fCoSe with
@@ -295,7 +307,12 @@ function syncNodes(
       // flower on a wide ring; the layout run then refines from there.
       cy.add({
         group: 'nodes',
-        data: elementData,
+        data: {
+          ...elementData,
+          birthColor: nodeBirthColor, // pure ramp colour (borders, bloom ring)
+          birthFill: birthFill(nodeBirthColor), // paper-mixed fill (label legibility)
+          birthGhost: birthGhostTint(nodeBirthColor), // reduced-strength ghost border tint
+        },
         classes: classes.join(' '),
         position: computeSeedPosition(
           node.id,

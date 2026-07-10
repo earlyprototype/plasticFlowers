@@ -2,7 +2,7 @@
 
 import cytoscape, { Core } from 'cytoscape';
 import fcose from 'cytoscape-fcose';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import type { Flower, Node, Relationship } from '../../lib/types';
 import type { ConnectionState } from '../../hooks/useSSE';
@@ -11,6 +11,7 @@ import { calculateLayout } from './layout/layoutEngine';
 import { syncGraphStructure } from './rendering/graphRenderer';
 import { createTerrainUnderlay, type TerrainUnderlay } from './rendering/terrainUnderlay';
 import {
+  computePortraitInfo,
   createPortraitOverlay,
   type PortraitInfo,
   type PortraitOverlay,
@@ -20,10 +21,8 @@ import { applyAdaptiveStemPetalPositioning } from './layout/stemPetalPositioning
 import { LAYOUT_CONFIG, ANIMATION_CONFIG, buildStyleConfig } from './config/layoutConfig';
 import {
   PORTRAIT_FIT_PADDING,
-  defaultPortraitTitle,
-  formatPortraitDate,
-  formatSessionDuration,
   isCartographyEnabled,
+  portraitExportFilename,
 } from './config/cartography';
 
 // Register the fcose layout once at module scope (module evaluation already
@@ -41,6 +40,21 @@ export type GraphCanvasProps = {
   connectionState?: ConnectionState;
   lastChunkError?: string | null;
   className?: string;
+  /**
+   * UNFILTERED session nodes, when `nodes` is a filtered view. Feeds the
+   * portrait title block (concept count, duration) so plate stats document
+   * the whole session regardless of active UI filters. Defaults to `nodes`.
+   */
+  allNodes?: Node[];
+  /** UNFILTERED session flowers (see allNodes). Defaults to `flowers`. */
+  allFlowers?: Flower[];
+  /**
+   * Session start (ms since epoch) — the birth-colour anchor (Move 4).
+   * Supply it from the session record so node hues are independent of
+   * filtering; when absent the renderer infers it from the earliest birth
+   * among the nodes it is given.
+   */
+  sessionStartMs?: number;
   /**
    * Portrait mode (Move 5): present the finished map as a keepable plate —
    * ghosts hidden, camera fitted to the confirmed graph, neatline + title
@@ -83,6 +97,15 @@ function captureCurrentPositions(cy: Core): Map<string, { x: number; y: number }
   return positions;
 }
 
+/** Sentinel title-block content while the plate is not shown. */
+const EMPTY_PORTRAIT_INFO: PortraitInfo = {
+  title: '',
+  dateLabel: '—',
+  durationLabel: '—',
+  conceptCount: 0,
+  islandCount: 0,
+};
+
 export function GraphCanvas({
   nodes,
   relationships,
@@ -90,6 +113,9 @@ export function GraphCanvas({
   connectionState = 'idle',
   lastChunkError,
   className,
+  allNodes,
+  allFlowers,
+  sessionStartMs,
   portrait = false,
   portraitTitle,
   sessionId,
@@ -101,6 +127,9 @@ export function GraphCanvas({
   const portraitCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const portraitOverlayRef = useRef<PortraitOverlay | null>(null);
   const portraitActiveRef = useRef(false);
+  // Export failures surface as a toast (same pattern as the chunk-error
+  // toast); cleared on the next attempt and on portrait exit.
+  const [portraitError, setPortraitError] = useState<string | null>(null);
   const cyRef = useRef<Core | null>(null);
   // Lazy init: `useRef(new AnimationController())` would construct (and throw
   // away) a fresh instance on every render.
@@ -126,28 +155,20 @@ export function GraphCanvas({
   // Portrait requires cartography — with the flag off the prop is inert.
   const portraitActive = CARTOGRAPHY_ENABLED && portrait;
 
-  // Title-block content, derived from live data: duration runs from the
-  // earliest node birth to the latest (or to the session end when known).
+  // Title-block content, derived from live data. Uses the UNFILTERED lists
+  // (allNodes/allFlowers) — plate stats must document the whole session, not
+  // the current filter view. Skipped entirely (cheap sentinel) while the
+  // plate is not shown: no reason to scan every node on each live sync.
   const portraitInfo = useMemo<PortraitInfo>(() => {
-    let earliest = Number.POSITIVE_INFINITY;
-    let latest = Number.NEGATIVE_INFINITY;
-    for (const node of nodes) {
-      const ms = Date.parse(node.created_at);
-      if (!Number.isFinite(ms)) continue;
-      if (ms < earliest) earliest = ms;
-      if (ms > latest) latest = ms;
-    }
-    const endedMs = sessionEndedAt ? Date.parse(sessionEndedAt) : Number.NaN;
-    if (Number.isFinite(endedMs) && endedMs > latest) latest = endedMs;
-    const hasSpan = Number.isFinite(earliest) && latest >= earliest;
-    return {
-      title: portraitTitle?.trim() || defaultPortraitTitle(sessionId),
-      dateLabel: formatPortraitDate(hasSpan ? earliest : Date.now()),
-      durationLabel: hasSpan ? formatSessionDuration(latest - earliest) : '—',
-      conceptCount: nodes.filter((n) => n.status === 'solid').length,
-      islandCount: flowers.length,
-    };
-  }, [nodes, flowers, portraitTitle, sessionId, sessionEndedAt]);
+    if (!portraitActive) return EMPTY_PORTRAIT_INFO;
+    return computePortraitInfo({
+      nodes: allNodes ?? nodes,
+      flowers: allFlowers ?? flowers,
+      portraitTitle,
+      sessionId,
+      sessionEndedAt,
+    });
+  }, [portraitActive, allNodes, nodes, allFlowers, flowers, portraitTitle, sessionId, sessionEndedAt]);
 
   const portraitInfoRef = useRef(portraitInfo);
   useEffect(() => {
@@ -381,12 +402,17 @@ export function GraphCanvas({
   }, [getAnimController]);
 
   // Portrait mode entry/exit. Entering hides ghosts (and any mid-wilt
-  // leftovers), remembers the camera and fits it to the confirmed graph, and
-  // mounts the chrome overlay. Interaction stays ON — a portrait you can
-  // still explore is better; we only fit on entry. Exiting restores the
-  // hidden elements and the exact previous viewport.
+  // leftovers), flips the controller into its calm portrait mode (no verbs,
+  // no growth-camera moves — instant final states only), remembers the
+  // camera and fits it to the confirmed graph, and mounts the chrome
+  // overlay. Interaction stays ON — a portrait you can still explore is
+  // better; we only fit on entry. Exiting restores the hidden elements and
+  // the exact previous viewport.
   useEffect(() => {
     portraitActiveRef.current = portraitActive;
+    const controller = getAnimController();
+    controller.setPortrait(portraitActive);
+    if (!portraitActive) setPortraitError(null);
     const cy = cyRef.current;
     const canvas = portraitCanvasRef.current;
     if (!portraitActive || !cy || !canvas) return;
@@ -397,24 +423,29 @@ export function GraphCanvas({
 
     const previousViewport = { zoom: cy.zoom(), pan: { ...cy.pan() } };
     cy.elements('.ghost, .wilting').addClass('portrait-hidden');
-    const kept = cy.elements().not('.portrait-hidden');
-    if (kept.length > 0) {
-      cy.animate(
-        { fit: { eles: kept, padding: PORTRAIT_FIT_PADDING } },
-        { duration: 700, easing: 'ease-in-out' }
-      );
-    }
+    // Entry fit via the controller: it supersedes any queued growth fit and
+    // honours prefers-reduced-motion (instant fit instead of a tween).
+    controller.startCameraFit(cy, {
+      eles: cy.elements().not('.portrait-hidden'),
+      padding: PORTRAIT_FIT_PADDING,
+      duration: 700,
+    });
 
     return () => {
       portraitActiveRef.current = false;
+      controller.setPortrait(false);
       overlay.destroy();
       portraitOverlayRef.current = null;
       if (!cy.destroyed()) {
+        // Halt any in-flight viewport animation (e.g. an exit within the
+        // 700ms entry fit) BEFORE restoring — a live tween would otherwise
+        // overwrite the restored viewport on its next frame.
+        cy.stop(true);
         cy.elements('.portrait-hidden').removeClass('portrait-hidden');
         cy.viewport({ zoom: previousViewport.zoom, pan: previousViewport.pan });
       }
     };
-  }, [portraitActive]);
+  }, [portraitActive, getAnimController]);
 
   // 'Save portrait' — composite the three layers at 2x resolution into one
   // PNG: paper + terrain (re-rendered at export scale), the Cytoscape graph
@@ -428,40 +459,61 @@ export function GraphCanvas({
     const container = containerRef.current;
     if (!cy || !terrain || !overlay || !container) return;
 
-    const width = container.clientWidth;
-    const height = container.clientHeight;
-    const scale = 2;
-    const exportCanvas = document.createElement('canvas');
-    exportCanvas.width = Math.round(width * scale);
-    exportCanvas.height = Math.round(height * scale);
-    const ctx = exportCanvas.getContext('2d');
-    if (!ctx) return;
+    setPortraitError(null);
+    try {
+      const width = container.clientWidth;
+      const height = container.clientHeight;
+      const scale = 2;
+      const exportCanvas = document.createElement('canvas');
+      exportCanvas.width = Math.round(width * scale);
+      exportCanvas.height = Math.round(height * scale);
+      const ctx = exportCanvas.getContext('2d');
+      if (!ctx) {
+        throw new Error('could not create an export canvas context');
+      }
 
-    terrain.renderTo(ctx, width, height, scale);
+      terrain.renderTo(ctx, width, height, scale);
 
-    const graphPng = cy.png({ scale, full: false, bg: 'transparent' });
-    await new Promise<void>((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => {
-        ctx.setTransform(1, 0, 0, 1, 0, 0);
-        ctx.drawImage(img, 0, 0, exportCanvas.width, exportCanvas.height);
-        resolve();
-      };
-      img.onerror = () => reject(new Error('Portrait export: failed to rasterise the graph'));
-      img.src = graphPng;
-    });
+      // cy.png is fine for the middle layer: it renders the graph itself
+      // at export scale on a transparent background.
+      const graphPng = cy.png({ scale, full: false, bg: 'transparent' });
+      await new Promise<void>((resolve, reject) => {
+        const img = new Image();
+        img.onload = () => {
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.drawImage(img, 0, 0, exportCanvas.width, exportCanvas.height);
+          resolve();
+        };
+        img.onerror = () => reject(new Error('failed to rasterise the graph layer'));
+        img.src = graphPng;
+      });
 
-    overlay.renderTo(ctx, width, height, scale);
+      overlay.renderTo(ctx, width, height, scale);
 
-    const stamp = sessionId?.trim()
-      ? sessionId.trim().slice(0, 8)
-      : new Date().toISOString().slice(0, 10);
-    const link = document.createElement('a');
-    link.href = exportCanvas.toDataURL('image/png');
-    link.download = `plasticflowers-portrait-${stamp}.png`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+      // toBlob + object URL instead of toDataURL: no multi-megabyte base64
+      // string on the main thread, and encoding failures reject visibly.
+      const blob = await new Promise<Blob>((resolve, reject) => {
+        exportCanvas.toBlob(
+          (result) =>
+            result ? resolve(result) : reject(new Error('PNG encoding failed')),
+          'image/png'
+        );
+      });
+
+      const url = URL.createObjectURL(blob);
+      try {
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = portraitExportFilename(sessionId);
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      } finally {
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      setPortraitError(err instanceof Error ? err.message : String(err));
+    }
   }, [sessionId]);
 
   // Debounced graph update with clean orchestration
@@ -498,6 +550,7 @@ export function GraphCanvas({
       // prefers-reduced-motion.
       const syncResult = syncGraphStructure(cy, { nodes, relationships, flowers }, layoutResult, {
         removeElement: (ele) => controller.wiltAndRemove(ele),
+        sessionStartMs,
       });
 
       // 3. Determine if layout should run
@@ -534,8 +587,10 @@ export function GraphCanvas({
           }
         });
 
-        // Run layout
-        const layout = cy.elements().layout(layoutConfig as any);
+        // Run layout. Mid-wilt elements are excluded: a departing node is
+        // already off the map data-wise and must not push live nodes around
+        // (or be dragged to a new position while it fades).
+        const layout = cy.elements().not('.wilting').layout(layoutConfig as any);
         layout.run();
 
         // Unlock all nodes
@@ -590,7 +645,7 @@ export function GraphCanvas({
         syncDebounceTimerRef.current = null;
       }
     };
-  }, [nodes, relationships, flowers, getAnimController]);
+  }, [nodes, relationships, flowers, sessionStartMs, getAnimController]);
 
   return (
     <div className={`graph-canvas ${className ?? ''}`}>
@@ -645,6 +700,11 @@ export function GraphCanvas({
       {lastChunkError ? (
         <div className="graph-canvas__toast" role="status">
           Chunk skipped: {lastChunkError}
+        </div>
+      ) : null}
+      {portraitError ? (
+        <div className="graph-canvas__toast" role="alert">
+          Save portrait failed: {portraitError}
         </div>
       ) : null}
       {CARTOGRAPHY_ENABLED ? (

@@ -6,6 +6,8 @@ import { ExportPanel } from "../components/export";
 import { FiltersPanel, type FilterState } from "../components/filters";
 import { GraphCanvas } from "../components/graph";
 import {
+  BIRTH_PAPER,
+  CARTOGRAPHY_PALETTE,
   defaultPortraitTitle,
   isCartographyEnabled,
 } from "../components/graph/config/cartography";
@@ -99,8 +101,14 @@ export default function HomePage() {
     [nodes.length, relationships.length, flowers.length],
   );
 
-  const [sessionEnded, setSessionEnded] = useState(false);
   const [sessionEndedAt, setSessionEndedAt] = useState<string | null>(null);
+  // "Ended" is fully determined by the end timestamp — no second flag to
+  // keep in sync.
+  const sessionEnded = sessionEndedAt !== null;
+  // Session creation time (ISO) — the birth-colour anchor. Known when a
+  // session is created or picked from the list; unknown (null) for a pasted
+  // session id, where the anchor falls back to the earliest node birth.
+  const [sessionCreatedAt, setSessionCreatedAt] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [sessionName, setSessionName] = useState<string>("");
   const [showSessionPicker, setShowSessionPicker] = useState(false);
@@ -131,9 +139,10 @@ export default function HomePage() {
     setSessionInput(session.id);
     setSessionId(session.id);
     setSessionName(session.name);
-    setSessionEnded(session.ended_at !== null);
     setSessionEndedAt(session.ended_at);
+    setSessionCreatedAt(session.created_at);
     setPortrait(false);
+    setPortraitTitle("");
     setShowSessionPicker(false);
   };
 
@@ -158,9 +167,12 @@ export default function HomePage() {
       // useGraphState refreshes on the sessionId change; calling the current
       // refreshGraph here would hit the OLD session (stale closure).
       setSessionId(value);
-      setSessionEnded(false);
       setSessionEndedAt(null);
+      // A pasted id carries no session record — the birth-colour anchor
+      // falls back to the earliest node birth (see sessionStartMs).
+      setSessionCreatedAt(null);
       setPortrait(false);
+      setPortraitTitle("");
     }
   };
 
@@ -172,9 +184,10 @@ export default function HomePage() {
       setSessionInput(result.id);
       setSessionId(result.id);
       setSessionName(result.name);
-      setSessionEnded(false);
       setSessionEndedAt(null);
+      setSessionCreatedAt(result.created_at);
       setPortrait(false);
+      setPortraitTitle("");
     } catch (err) {
       console.error('Failed to create session:', err);
       alert("Failed to create session. Check console/backend.");
@@ -186,12 +199,26 @@ export default function HomePage() {
   // Ending a session must produce a keepable artifact: once the end-session
   // API call succeeds, the UI flips into portrait mode automatically.
   const handleSessionEnded = useCallback((endedAt?: string) => {
-    setSessionEnded(true);
     setSessionEndedAt(endedAt ?? new Date().toISOString());
     if (CARTOGRAPHY_ENABLED) {
       setPortrait(true);
     }
   }, []);
+
+  // Birth-colour anchor (Move 4): the session record's created_at when
+  // known, otherwise the earliest birth among the UNFILTERED nodes — the
+  // anchor must never depend on the filter state, or filtering the earliest
+  // node out would repaint the whole map.
+  const sessionStartMs = useMemo(() => {
+    const fromRecord = sessionCreatedAt ? Date.parse(sessionCreatedAt) : Number.NaN;
+    if (Number.isFinite(fromRecord)) return fromRecord;
+    let earliest = Number.POSITIVE_INFINITY;
+    for (const node of nodes) {
+      const ms = Date.parse(node.created_at);
+      if (Number.isFinite(ms) && ms < earliest) earliest = ms;
+    }
+    return Number.isFinite(earliest) ? earliest : undefined;
+  }, [sessionCreatedAt, nodes]);
 
   return (
     <main
@@ -218,11 +245,11 @@ export default function HomePage() {
               id="portrait-toggle"
               onClick={() => setPortrait((value) => !value)}
               style={{
-                border: "1px solid #A8B196",
+                border: `1px solid ${CARTOGRAPHY_PALETTE.coast}`,
                 borderRadius: "6px",
                 padding: "6px 14px",
-                background: portrait ? "#42493E" : "#FBFAF2",
-                color: portrait ? "#FBFAF2" : "#42493E",
+                background: portrait ? CARTOGRAPHY_PALETTE.ink : BIRTH_PAPER,
+                color: portrait ? BIRTH_PAPER : CARTOGRAPHY_PALETTE.ink,
                 fontWeight: 600,
                 fontSize: "13px",
                 cursor: "pointer",
@@ -500,6 +527,9 @@ export default function HomePage() {
           nodes={filteredNodes}
           relationships={filteredRelationships}
           flowers={filteredFlowers}
+          allNodes={nodes}
+          allFlowers={flowers}
+          sessionStartMs={sessionStartMs}
           connectionState={connectionState}
           lastChunkError={lastChunkError}
           portrait={portrait}

@@ -1,5 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import cytoscape, { type Core, type SingularElementReturnValue } from 'cytoscape';
+import cytoscape, {
+  type CollectionReturnValue,
+  type Core,
+  type SingularElementReturnValue,
+} from 'cytoscape';
 import {
   AnimationController,
   SPROUT_EDGE_MS,
@@ -240,7 +244,7 @@ describe('AnimationController', () => {
       expect(cy.getElementById('doomed').nonempty()).toBe(false);
     });
 
-    it('cancelling a wilt keeps the element and restores its styling', async () => {
+    it('cancelling a wilt keeps the element and restores its styling in place', async () => {
       cy.add({ group: 'nodes', data: { id: 'phoenix' }, position: { x: 10, y: 20 } });
       const node = cy.getElementById('phoenix');
 
@@ -248,13 +252,17 @@ describe('AnimationController', () => {
       const handle = node.scratch(PENDING_REMOVAL_SCRATCH) as PendingRemovalHandle;
       expect(typeof handle.cancel).toBe('function');
 
+      // Layout moves the (still-present) element while it wilts — the revive
+      // must keep the CURRENT position, not teleport back to the wilt-start one.
+      node.position({ x: 300, y: 400 });
+
       handle.cancel!();
 
       expect(controller.pendingWiltCount).toBe(0);
       expect(node.hasClass('wilting')).toBe(false);
       expect(node.scratch(PENDING_REMOVAL_SCRATCH)).toBeUndefined();
       expect(num(node, 'opacity')).toBe(1); // inline wilt styles dropped
-      expect(node.position()).toEqual({ x: 10, y: 20 }); // sink undone
+      expect(node.position()).toEqual({ x: 300, y: 400 }); // revived where it is
 
       // The original removal timer must not fire.
       await vi.advanceTimersByTimeAsync(WILT_MS * 2);
@@ -290,6 +298,217 @@ describe('AnimationController', () => {
       cy.destroy();
       await vi.advanceTimersByTimeAsync(WILT_MS * 2); // must not throw
       controller.stopAll(cy); // must not throw against a destroyed core
+    });
+  });
+
+  describe('wilt × sprout collision', () => {
+    const addStemFixture = () => {
+      cy.add([
+        { group: 'nodes', data: { id: 'existing' }, position: { x: 0, y: 0 } },
+        { group: 'nodes', data: { id: 'fresh' }, position: { x: 100, y: 0 } },
+        { group: 'edges', data: { id: 'e1', source: 'existing', target: 'fresh' } },
+      ]);
+    };
+
+    it('a wilt starting mid-scale-in is never snapped back to full size', async () => {
+      addStemFixture();
+      const fresh = cy.getElementById('fresh');
+
+      void controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedNodeIds: new Set(['fresh']), addedEdgeIds: new Set(['e1']) })
+      );
+
+      // Scale-in has started at the edge beat: the node is a dot.
+      await vi.advanceTimersByTimeAsync(SPROUT_EDGE_MS);
+      expect(num(fresh, 'width')).toBe(1);
+
+      // Data removes the node mid-scale-in → the wilt takes over.
+      controller.wiltAndRemove(fresh);
+      expect(fresh.hasClass('wilting')).toBe(true);
+
+      // The sprout settle beat must bail: finalisation would drop the inline
+      // width (snap to the full 40px) under the wilt tween.
+      await vi.advanceTimersByTimeAsync(SPROUT_NODE_MS);
+      expect(num(fresh, 'width')).toBe(1);
+      expect(fresh.hasClass('wilting')).toBe(true);
+
+      // The wilt then completes and removes the element.
+      await vi.advanceTimersByTimeAsync(WILT_MS);
+      expect(cy.getElementById('fresh').nonempty()).toBe(false);
+    });
+
+    it('a node wilted before its reveal cue never flashes visible', async () => {
+      addStemFixture();
+      const fresh = cy.getElementById('fresh');
+
+      void controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedNodeIds: new Set(['fresh']), addedEdgeIds: new Set(['e1']) })
+      );
+
+      // Still hidden — its stem edge is growing.
+      expect(num(fresh, 'opacity')).toBe(0);
+      controller.wiltAndRemove(fresh);
+
+      // The scale-in cue must bail: no reveal, ever.
+      await vi.advanceTimersByTimeAsync(SPROUT_EDGE_MS + SPROUT_NODE_MS);
+      expect(num(fresh, 'opacity')).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(WILT_MS);
+      expect(cy.getElementById('fresh').nonempty()).toBe(false);
+    });
+
+    it('an edge wilted mid-sweep is not snapped to a full line', async () => {
+      cy.add([
+        { group: 'nodes', data: { id: 'a' }, position: { x: 0, y: 0 } },
+        { group: 'nodes', data: { id: 'b' }, position: { x: 100, y: 0 } },
+        { group: 'edges', data: { id: 'e1', source: 'a', target: 'b' } },
+      ]);
+      const edge = cy.getElementById('e1');
+
+      void controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedEdgeIds: new Set(['e1']) })
+      );
+
+      // Sweep armed (both endpoints pre-existed → grows immediately).
+      expect(edge.style('line-style')).toBe('dashed');
+
+      controller.wiltAndRemove(edge);
+
+      // Finalisation must bail: the inline dash sweep styles stay (bailing
+      // means no stop(jump-to-end) + removeStyle back to a solid full line).
+      await vi.advanceTimersByTimeAsync(SPROUT_EDGE_MS);
+      expect(edge.style('line-style')).toBe('dashed');
+
+      await vi.advanceTimersByTimeAsync(WILT_MS);
+      expect(cy.getElementById('e1').nonempty()).toBe(false);
+    });
+  });
+
+  describe('camera', () => {
+    it('startCameraFit excludes wilting elements from the frame', () => {
+      cy.add([
+        { group: 'nodes', data: { id: 'alive' }, position: { x: 0, y: 0 } },
+        { group: 'nodes', data: { id: 'dying' }, position: { x: 500, y: 0 } },
+      ]);
+      controller.wiltAndRemove(cy.getElementById('dying'));
+
+      const animate = vi.spyOn(cy, 'animate');
+      controller.startCameraFit(cy);
+
+      expect(animate).toHaveBeenCalledTimes(1);
+      const arg = animate.mock.calls[0][0] as {
+        fit: { eles: CollectionReturnValue; padding: number };
+      };
+      const ids = arg.fit.eles.map((ele) => ele.id());
+      expect(ids).toContain('alive');
+      expect(ids).not.toContain('dying');
+    });
+
+    it('honours eles/padding options and reduced motion (instant fit)', () => {
+      controller = new AnimationController({ prefersReducedMotion: () => true });
+      cy.add([
+        { group: 'nodes', data: { id: 'a' }, position: { x: 0, y: 0 } },
+        { group: 'nodes', data: { id: 'b' }, position: { x: 100, y: 0 } },
+      ]);
+
+      const fit = vi.spyOn(cy, 'fit');
+      const animate = vi.spyOn(cy, 'animate');
+      controller.startCameraFit(cy, { eles: cy.elements('#a'), padding: 96, duration: 700 });
+
+      expect(animate).not.toHaveBeenCalled(); // no tween under reduced motion
+      expect(fit).toHaveBeenCalledTimes(1);
+      const [eles, padding] = fit.mock.calls[0] as [CollectionReturnValue, number];
+      expect(eles.map((ele) => ele.id())).toEqual(['a']);
+      expect(padding).toBe(96);
+    });
+  });
+
+  describe('portrait mode (setPortrait)', () => {
+    it('suppresses the growth camera fit entirely', async () => {
+      cy.add({ group: 'nodes', data: { id: 'a' } });
+      controller.setPortrait(true);
+
+      const animate = vi.spyOn(cy, 'animate');
+      const fit = vi.spyOn(cy, 'fit');
+      await controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedNodeIds: new Set(['a']) })
+      );
+
+      expect(animate).not.toHaveBeenCalled();
+      expect(fit).not.toHaveBeenCalled();
+    });
+
+    it('runs no verbs: instant final states, no pulse, immediate removals', async () => {
+      controller.setPortrait(true);
+      cy.add({ group: 'nodes', data: { id: 'n1' }, classes: 'solid' });
+
+      await controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedNodeIds: new Set(['n1']), confirmedNodeIds: new Set(['n1']) })
+      );
+
+      const node = cy.getElementById('n1');
+      expect(num(node, 'opacity')).toBe(1); // appeared instantly, never hidden
+      expect(num(node, 'overlay-opacity')).toBe(0); // no bloom pulse
+
+      controller.wiltAndRemove(node);
+      expect(cy.getElementById('n1').nonempty()).toBe(false); // removed instantly
+      expect(controller.pendingWiltCount).toBe(0);
+    });
+
+    it('verbs animate again after setPortrait(false)', () => {
+      controller.setPortrait(true);
+      controller.setPortrait(false);
+      cy.add({ group: 'nodes', data: { id: 'doomed' } });
+
+      controller.wiltAndRemove(cy.getElementById('doomed'));
+      expect(cy.getElementById('doomed').nonempty()).toBe(true); // deferred again
+      expect(controller.pendingWiltCount).toBe(1);
+    });
+  });
+
+  describe('timer hygiene (stopAll)', () => {
+    it('leaves no timer alive when stopped mid-choreography (unmount path)', async () => {
+      cy.add([
+        { group: 'nodes', data: { id: 'existing' }, position: { x: 0, y: 0 } },
+        { group: 'nodes', data: { id: 'fresh' }, position: { x: 100, y: 0 } },
+        { group: 'edges', data: { id: 'e1', source: 'existing', target: 'fresh' } },
+        { group: 'nodes', data: { id: 'confirmed' }, classes: 'solid' },
+        { group: 'nodes', data: { id: 'doomed' } },
+      ]);
+
+      // A sprout (edge + node beats), a bloom cleanup and a wilt removal all
+      // have timers armed at once.
+      void controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({
+          addedNodeIds: new Set(['fresh']),
+          addedEdgeIds: new Set(['e1']),
+          confirmedNodeIds: new Set(['confirmed']),
+        })
+      );
+      controller.wiltAndRemove(cy.getElementById('doomed'));
+      expect(controller.pendingChoreographyCount).toBeGreaterThan(0);
+      expect(controller.pendingWiltCount).toBe(1);
+
+      controller.stopAll(cy);
+
+      // Every controller timer is gone and mid-wilt elements were removed
+      // immediately.
+      expect(controller.pendingWiltCount).toBe(0);
+      expect(controller.pendingChoreographyCount).toBe(0);
+      expect(cy.getElementById('doomed').nonempty()).toBe(false);
+
+      // The only timer that may remain is cytoscape's own animation-step
+      // tick (armed by ele.animate); it dies with the core. After destroy,
+      // NOTHING is left to fire — the unmount path leaks no timers.
+      cy.destroy();
+      await vi.advanceTimersByTimeAsync(WILT_MS * 3);
+      expect(vi.getTimerCount()).toBe(0);
     });
   });
 });
