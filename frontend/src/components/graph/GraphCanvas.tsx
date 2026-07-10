@@ -9,13 +9,19 @@ import type { ConnectionState } from '../../hooks/useSSE';
 
 import { calculateLayout } from './layout/layoutEngine';
 import { syncGraphStructure } from './rendering/graphRenderer';
+import { createTerrainUnderlay, type TerrainUnderlay } from './rendering/terrainUnderlay';
 import { AnimationController } from './animation/animationController';
 import { applyAdaptiveStemPetalPositioning } from './layout/stemPetalPositioning';
-import { LAYOUT_CONFIG, ANIMATION_CONFIG, STYLE_CONFIG } from './config/layoutConfig';
+import { LAYOUT_CONFIG, ANIMATION_CONFIG, buildStyleConfig } from './config/layoutConfig';
+import { isCartographyEnabled } from './config/cartography';
 
 // Register the fcose layout once at module scope (module evaluation already
 // runs exactly once per bundle — a mutable guard flag was a no-op).
 cytoscape.use(fcose);
+
+// NEXT_PUBLIC_* vars are inlined at build time, so the flag is a module
+// constant: it cannot change within a running bundle.
+const CARTOGRAPHY_ENABLED = isCartographyEnabled();
 
 export type GraphCanvasProps = {
   nodes: Node[];
@@ -62,6 +68,8 @@ export function GraphCanvas({
   className,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const underlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const terrainRef = useRef<TerrainUnderlay | null>(null);
   const cyRef = useRef<Core | null>(null);
   // Lazy init: `useRef(new AnimationController())` would construct (and throw
   // away) a fresh instance on every render.
@@ -189,11 +197,18 @@ export function GraphCanvas({
     }
     const cy = cytoscape({
       container: containerRef.current,
-      style: STYLE_CONFIG as any,
+      style: buildStyleConfig(CARTOGRAPHY_ENABLED) as any,
       autoungrabify: false,
       boxSelectionEnabled: false,
     });
     cyRef.current = cy;
+
+    // Terrain underlay: cartographic islands drawn beneath the (transparent)
+    // Cytoscape viewport, tracking pan/zoom via the canvas transform.
+    if (CARTOGRAPHY_ENABLED && underlayCanvasRef.current) {
+      terrainRef.current = createTerrainUnderlay(cy, underlayCanvasRef.current);
+      terrainRef.current.setFlowers(currentDataRef.current.flowers);
+    }
 
     // Setup event delegation for flower collapse/expand
     cy.on('tap', 'node.flower', (evt) => {
@@ -293,6 +308,8 @@ export function GraphCanvas({
       cy.off('mouseover', 'edge', handleHoverOn);
       cy.off('mouseout', 'edge', handleHoverOff);
       controller.stopAllFloatAnimations(cy);
+      terrainRef.current?.destroy();
+      terrainRef.current = null;
       cy.destroy();
       cyRef.current = null;
     };
@@ -382,9 +399,28 @@ export function GraphCanvas({
         applyAdaptiveStemPetalPositioning(cy, flowers);
       }
 
+      // 3.6. Element sync complete — hand the fresh flower list to the
+      // terrain underlay (schedules a coalesced redraw). Position changes
+      // during the upcoming animations are tracked by its own listeners.
+      terrainRef.current?.setFlowers(flowers);
+
       // 4. Execute animation sequence (camera-first!)
       await controller.executeAnimationSequence(cy, syncResult, layoutResult.isolatedNodeIds);
       if (cancelled || cy.destroyed()) return;
+
+      // 4.5. Repaint workaround: at low zoom Cytoscape's layered texture
+      // cache can retain the mid-fade frame (edges at opacity 0), leaving
+      // edges unpainted until a geometry-affecting style change. Verified
+      // empirically (cytoscape 3.33): pan, zoom nudges, class toggles and
+      // opacity nudges do NOT invalidate the stale layer — a width change
+      // does, and the repaint persists after the width is restored.
+      if (syncResult.addedEdgeIds.size > 0) {
+        const edges = cy.edges();
+        edges.style('width', 4);
+        setTimeout(() => {
+          if (!cy.destroyed()) edges.removeStyle('width');
+        }, 60);
+      }
 
       // 5. Update previous flowers for next comparison
       previousFlowersRef.current = [...flowers];
@@ -442,6 +478,9 @@ export function GraphCanvas({
           <span>Solid: confirmed</span>
         </div>
       </div>
+      {CARTOGRAPHY_ENABLED ? (
+        <canvas ref={underlayCanvasRef} className="graph-canvas__underlay" aria-hidden="true" />
+      ) : null}
       <div ref={containerRef} className="graph-canvas__viewport" />
     </div>
   );

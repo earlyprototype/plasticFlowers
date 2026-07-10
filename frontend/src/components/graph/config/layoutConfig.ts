@@ -1,8 +1,10 @@
 /**
  * Graph Configuration - Layout, animation, and style settings
- * 
+ *
  * Centralized configuration for easy tuning without code changes.
  */
+
+import { CARTOGRAPHY_PALETTE } from './cartography';
 
 export const LAYOUT_CONFIG = {
   name: 'fcose',
@@ -227,4 +229,130 @@ export const STYLE_CONFIG = [
     },
   },
 ] as const;
+
+/**
+ * Cartography overrides — appended AFTER the base stylesheet so, at equal
+ * selector specificity, they win. Typography + colour only: layout physics
+ * (padding, sizing, spacing) is untouched.
+ *
+ * Label hierarchy:
+ * - stem nodes: serif stack, 14px, weight 600 (the island's "capital city")
+ * - petal/regular nodes: small sans, 11px
+ * - ghost nodes: italic, faint label
+ * The flower compound rectangle is muted to invisible — the terrain island
+ * drawn by the underlay (see rendering/terrainUnderlay.ts) IS the group
+ * visual, and its arced name replaces the compound label.
+ */
+// NOTE: Cytoscape's style parser rejects quoted font names ("style property
+// invalid") — list multi-word families unquoted, unlike canvas ctx.font.
+const CARTOGRAPHY_SERIF_STACK =
+  'Iowan Old Style, Palatino Linotype, Palatino, Georgia, serif';
+
+const CARTOGRAPHY_STYLE_OVERRIDES = [
+  {
+    selector: 'node',
+    style: {
+      'background-color': '#FBFAF2', // paper-white over the chart paper
+      'border-color': '#57604F',
+      'border-width': 1, // lighter linework than the legacy 2px strokes
+      'font-family': 'Nunito, system-ui, sans-serif',
+      'font-size': '11px',
+      'font-weight': 400,
+      color: CARTOGRAPHY_PALETTE.ink,
+    },
+  },
+  {
+    selector: 'node.ghost',
+    style: {
+      // Legacy 0.15 disappears entirely against the chart paper; keep
+      // ghosts clearly fainter than solid nodes but still readable.
+      opacity: 0.45,
+      'font-style': 'italic',
+      'font-size': '10px',
+      'text-opacity': 0.75,
+      color: '#6B7263',
+      'border-color': '#9AA28C',
+      'background-color': '#F4F3E9',
+    },
+  },
+  {
+    selector: 'node.solid',
+    style: {
+      'font-weight': 600,
+      'border-color': '#42493E',
+      'border-width': 1.5, // was 3 — map linework, not marker pen
+      'background-color': '#FBFAF2',
+    },
+  },
+  {
+    selector: 'node.stem',
+    style: {
+      'font-family': CARTOGRAPHY_SERIF_STACK,
+      'font-size': '14px',
+      'font-weight': 600,
+      color: '#38301F',
+      'border-color': '#A98F5A', // surveyed-sepia accent
+      'border-width': 2, // was 5 — keep prominence without the heavy frame
+      'background-color': '#F3EDDB',
+    },
+  },
+  {
+    // The terrain island is the cluster visual now — mute the compound
+    // rectangle to near-invisible (its arced island name replaces the label).
+    // IMPORTANT: keep background-opacity NONZERO. With a fully transparent
+    // compound (background-opacity 0) Cytoscape's initial render leaves
+    // edges unpainted until the next viewport invalidation (verified
+    // empirically on 3.33 — border-width alone does not help); 0.01 keeps
+    // the render path healthy while compositing to <1 RGB unit on screen.
+    selector: 'node.flower',
+    style: {
+      'text-opacity': 0,
+      'background-opacity': 0.01,
+      'background-color': '#D8DDC4',
+      'border-width': 0.5,
+      'border-opacity': 0.1,
+      'border-color': '#A8B196',
+    },
+  },
+  {
+    selector: 'node.flower.hovered',
+    style: {
+      'border-width': 0.5,
+      'border-color': '#A8B196',
+    },
+  },
+  {
+    selector: 'edge',
+    style: {
+      // Legacy 1px/0.4 linework disappears at fit zoom on the paper bg —
+      // keep edges quiet but perceptible, like route lines on a survey map.
+      'line-color': '#8F997D',
+      'target-arrow-color': '#8F997D',
+      width: 2,
+      opacity: 0.7,
+      color: '#6B7263',
+      'text-background-color': CARTOGRAPHY_PALETTE.bg,
+    },
+  },
+  {
+    // Bridges between islands cross open paper — heavier + darker so the
+    // route reads even at fit-all zoom (still dashed from the base style).
+    selector: 'edge.inter-flower',
+    style: {
+      'line-color': '#828C70',
+      'target-arrow-color': '#828C70',
+      width: 3.5,
+      opacity: 0.75,
+    },
+  },
+] as const;
+
+/**
+ * Build the Cytoscape stylesheet. With cartography enabled the typography
+ * and colour overrides are appended to the base config; otherwise the
+ * stylesheet is exactly the legacy STYLE_CONFIG.
+ */
+export function buildStyleConfig(cartography: boolean) {
+  return cartography ? [...STYLE_CONFIG, ...CARTOGRAPHY_STYLE_OVERRIDES] : [...STYLE_CONFIG];
+}
 

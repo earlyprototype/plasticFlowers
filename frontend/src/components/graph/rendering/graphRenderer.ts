@@ -1,6 +1,6 @@
 import type { Core } from 'cytoscape';
 import type { Node, Relationship, Flower } from '../../../lib/types';
-import type { LayoutResult } from '../layout/layoutEngine';
+import { computeSeedPosition, type LayoutResult } from '../layout/layoutEngine';
 
 /**
  * Graph Renderer - Syncs data to Cytoscape
@@ -35,12 +35,13 @@ export function syncGraphStructure(
   
   // Build lookup sets
   const stemLookup = new Set(data.flowers.map((f) => f.stem_node_id).filter(Boolean));
-  
+  const flowerOrdinals = new Map(data.flowers.map((f, index) => [f.id, index]));
+
   // 1. Sync flowers (compound nodes)
   syncFlowers(cy, data.flowers, data.nodes, result);
-  
+
   // 2. Sync regular nodes
-  syncNodes(cy, data.nodes, stemLookup, layoutResult, result);
+  syncNodes(cy, data.nodes, stemLookup, flowerOrdinals, layoutResult, result);
   
   // 3. Sync edges
   syncEdges(cy, data.relationships, result);
@@ -112,6 +113,7 @@ function syncNodes(
   cy: Core,
   nodes: Node[],
   stemLookup: Set<string>,
+  flowerOrdinals: Map<string, number>,
   layoutResult: LayoutResult,
   result: SyncResult
 ): void {
@@ -163,11 +165,21 @@ function syncNodes(
       
       result.updatedNodeIds.add(node.id);
     } else {
-      // Create new node (position will be set by layout)
+      // Create new node with a deterministic seed position: Cytoscape
+      // defaults to (0,0), so a cold load (whole session in one sync) would
+      // otherwise stack every node on the same point — a start fCoSe with
+      // `randomize: false` cannot untangle. The seed clusters nodes by
+      // flower on a wide ring; the layout run then refines from there.
       cy.add({
         group: 'nodes',
         data: elementData,
         classes: classes.join(' '),
+        position: computeSeedPosition(
+          node.id,
+          parentId,
+          parentId != null ? flowerOrdinals.get(parentId) ?? 0 : 0,
+          flowerOrdinals.size
+        ),
       });
       result.addedNodeIds.add(node.id);
     }
