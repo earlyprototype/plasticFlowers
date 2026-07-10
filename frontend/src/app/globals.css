@@ -62,6 +62,42 @@ body {
   background: transparent;
 }
 
+/* Portrait chrome (Move 5) — a canvas layered ABOVE the Cytoscape viewport
+ * (pointer-events: none) drawn in screen coordinates: neatline, title block,
+ * time-ramp legend. Visible only in portrait mode. */
+.graph-canvas__portrait {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 4;
+}
+
+.graph-canvas__portrait-actions {
+  position: absolute;
+  top: 26px;
+  right: 30px;
+  z-index: 5;
+}
+
+.graph-canvas__portrait-actions button {
+  background: #fbfaf2;
+  border: 1px solid #a8b196;
+  border-radius: 4px;
+  padding: 6px 14px;
+  cursor: pointer;
+  font-weight: 600;
+  font-size: 12px;
+  color: #42493e;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+}
+
+.graph-canvas__portrait-actions button:hover {
+  background: #f4f3e9;
+}
+
 .graph-canvas__status {
   position: absolute;
   top: 12px;

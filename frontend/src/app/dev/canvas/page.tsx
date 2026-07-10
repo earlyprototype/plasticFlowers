@@ -296,6 +296,8 @@ function applyGrowStep(prev: GraphData, step: GrowStep): GraphData {
 export default function CanvasDevPage() {
   const [data, setData] = useState<GraphData>(FULL_FIXTURE);
   const [growing, setGrowing] = useState(false);
+  // Move 5: portrait mode — the presentation render of the finished map.
+  const [portrait, setPortrait] = useState(false);
   // Remount key: a grow run must start from an EMPTY canvas. Feeding empty
   // data into the mounted canvas would instead wilt the whole fixture away
   // (correct verb behavior, wrong demo) and revive nodes re-added within the
@@ -376,6 +378,23 @@ export default function CanvasDevPage() {
           Reset
         </button>
         {isCartographyEnabled() ? (
+          <button
+            id="portrait-toggle"
+            onClick={() => setPortrait((value) => !value)}
+            style={{
+              fontSize: '12px',
+              padding: '4px 12px',
+              border: '1px solid #A8A29E',
+              borderRadius: '4px',
+              background: portrait ? '#44403C' : '#FFFFFF',
+              color: portrait ? '#FFFFFF' : '#44403C',
+              cursor: 'pointer',
+            }}
+          >
+            {portrait ? 'Exit portrait' : 'Portrait'}
+          </button>
+        ) : null}
+        {isCartographyEnabled() ? (
           <div
             style={{
               display: 'flex',
@@ -408,6 +427,8 @@ export default function CanvasDevPage() {
         relationships={data.relationships}
         flowers={data.flowers}
         connectionState={growing ? 'open' : 'idle'}
+        portrait={portrait}
+        sessionId="dev-canvas"
       />
     </main>
   );

@@ -5,6 +5,10 @@ import { FormEvent, useCallback, useMemo, useState } from "react";
 import { ExportPanel } from "../components/export";
 import { FiltersPanel, type FilterState } from "../components/filters";
 import { GraphCanvas } from "../components/graph";
+import {
+  defaultPortraitTitle,
+  isCartographyEnabled,
+} from "../components/graph/config/cartography";
 import { MicControl } from "../components/MicControl";
 import { ResearchPanel } from "../components/research/ResearchPanel";
 import { useGraphState } from "../hooks";
@@ -12,6 +16,10 @@ import { createSession, renameSession, listSessions } from "../lib/api";
 import type { SessionSummary } from "../lib/types";
 
 const DEFAULT_SESSION_ID = "";
+
+// Portrait mode requires cartography — the toggle is hidden when the flag is
+// off. NEXT_PUBLIC_* vars are inlined at build time (module constant).
+const CARTOGRAPHY_ENABLED = isCartographyEnabled();
 
 export default function HomePage() {
   const [sessionInput, setSessionInput] = useState(DEFAULT_SESSION_ID);
@@ -92,11 +100,18 @@ export default function HomePage() {
   );
 
   const [sessionEnded, setSessionEnded] = useState(false);
+  const [sessionEndedAt, setSessionEndedAt] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [sessionName, setSessionName] = useState<string>("");
   const [showSessionPicker, setShowSessionPicker] = useState(false);
   const [availableSessions, setAvailableSessions] = useState<SessionSummary[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
+
+  // Session portrait (Move 5): the presentation render of the finished map.
+  // Auto-enters when the session ends; also toggleable from the header. The
+  // title is local state only — persisting it to the backend is a follow-up.
+  const [portrait, setPortrait] = useState(false);
+  const [portraitTitle, setPortraitTitle] = useState("");
 
   const handleLoadClick = async () => {
     setIsLoadingSessions(true);
@@ -117,6 +132,8 @@ export default function HomePage() {
     setSessionId(session.id);
     setSessionName(session.name);
     setSessionEnded(session.ended_at !== null);
+    setSessionEndedAt(session.ended_at);
+    setPortrait(false);
     setShowSessionPicker(false);
   };
 
@@ -142,6 +159,8 @@ export default function HomePage() {
       // refreshGraph here would hit the OLD session (stale closure).
       setSessionId(value);
       setSessionEnded(false);
+      setSessionEndedAt(null);
+      setPortrait(false);
     }
   };
 
@@ -154,6 +173,8 @@ export default function HomePage() {
       setSessionId(result.id);
       setSessionName(result.name);
       setSessionEnded(false);
+      setSessionEndedAt(null);
+      setPortrait(false);
     } catch (err) {
       console.error('Failed to create session:', err);
       alert("Failed to create session. Check console/backend.");
@@ -162,8 +183,14 @@ export default function HomePage() {
     }
   };
 
-  const handleSessionEnded = useCallback(() => {
+  // Ending a session must produce a keepable artifact: once the end-session
+  // API call succeeds, the UI flips into portrait mode automatically.
+  const handleSessionEnded = useCallback((endedAt?: string) => {
     setSessionEnded(true);
+    setSessionEndedAt(endedAt ?? new Date().toISOString());
+    if (CARTOGRAPHY_ENABLED) {
+      setPortrait(true);
+    }
   }, []);
 
   return (
@@ -184,6 +211,44 @@ export default function HomePage() {
           script, then bounce the backend (Ctrl+C / restart). The status badge on the canvas should move
           through <strong>open → reconnecting → open</strong>, providing the artefact required for Gate&nbsp;4.
         </p>
+        {CARTOGRAPHY_ENABLED ? (
+          <div style={{ marginTop: "12px", display: "flex", gap: "8px", alignItems: "center" }}>
+            <button
+              type="button"
+              id="portrait-toggle"
+              onClick={() => setPortrait((value) => !value)}
+              style={{
+                border: "1px solid #A8B196",
+                borderRadius: "6px",
+                padding: "6px 14px",
+                background: portrait ? "#42493E" : "#FBFAF2",
+                color: portrait ? "#FBFAF2" : "#42493E",
+                fontWeight: 600,
+                fontSize: "13px",
+                cursor: "pointer",
+              }}
+            >
+              {portrait ? "Exit portrait" : "Portrait"}
+            </button>
+            {portrait ? (
+              <input
+                type="text"
+                id="portrait-title"
+                value={portraitTitle}
+                onChange={(event) => setPortraitTitle(event.target.value)}
+                placeholder={defaultPortraitTitle(sessionId)}
+                aria-label="Portrait title"
+                style={{
+                  padding: "6px 10px",
+                  borderRadius: "6px",
+                  border: "1px solid #D4D4D4",
+                  fontSize: "13px",
+                  width: "260px",
+                }}
+              />
+            ) : null}
+          </div>
+        ) : null}
       </header>
 
       <section
@@ -437,6 +502,10 @@ export default function HomePage() {
           flowers={filteredFlowers}
           connectionState={connectionState}
           lastChunkError={lastChunkError}
+          portrait={portrait}
+          portraitTitle={portraitTitle}
+          sessionId={sessionId}
+          sessionEndedAt={sessionEndedAt}
         />
       </section>
     </main>

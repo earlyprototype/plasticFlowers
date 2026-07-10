@@ -10,6 +10,11 @@ import {
   BLOB_STEPS,
   CARTOGRAPHY_PALETTE,
   ISLAND_PADDING,
+  NEATLINE_GAP,
+  NEATLINE_INNER_WIDTH,
+  NEATLINE_OUTER_INSET,
+  NEATLINE_OUTER_WIDTH,
+  PORTRAIT_LEGEND_INSET,
   SESSION_HUE_SPAN_MS,
   TERRAIN_LEVELS,
   Y_SQUASH,
@@ -17,14 +22,22 @@ import {
   birthColor,
   birthFill,
   birthGhostTint,
+  birthRampStops,
   blobPath,
   blobRadius,
+  buildPortraitTitleBlock,
   centroidOf,
+  defaultPortraitTitle,
+  formatPortraitDate,
+  formatSessionDuration,
   hashPhase,
   islandBaseRadius,
   islandLabelRadius,
   isCartographyEnabled,
   mixHex,
+  neatlineRects,
+  portraitLegendLayout,
+  portraitStatsLine,
 } from './cartography';
 
 describe('hashPhase', () => {
@@ -281,5 +294,144 @@ describe('palette / terrain levels', () => {
     expect(TERRAIN_LEVELS.map((l) => l.scale)).toEqual([1.32, 1.1, 0.62]);
     expect(TERRAIN_LEVELS.map((l) => l.coastline)).toEqual([false, true, false]);
     expect(TERRAIN_LEVELS.map((l) => l.fill)).toEqual(['terrain1', 'terrain2', 'terrain3']);
+  });
+});
+
+describe('neatlineRects (session portrait)', () => {
+  it('insets the outer rule and nests the inner rule by the gap', () => {
+    const { outer, inner } = neatlineRects(1000, 700);
+    expect(outer).toEqual({
+      x: NEATLINE_OUTER_INSET,
+      y: NEATLINE_OUTER_INSET,
+      width: 1000 - 2 * NEATLINE_OUTER_INSET,
+      height: 700 - 2 * NEATLINE_OUTER_INSET,
+    });
+    expect(inner.x).toBe(NEATLINE_OUTER_INSET + NEATLINE_GAP);
+    expect(inner.width).toBe(1000 - 2 * (NEATLINE_OUTER_INSET + NEATLINE_GAP));
+    expect(inner.height).toBe(700 - 2 * (NEATLINE_OUTER_INSET + NEATLINE_GAP));
+  });
+
+  it('keeps the outer rule heavier than the inner hairline', () => {
+    expect(NEATLINE_OUTER_WIDTH).toBeGreaterThan(NEATLINE_INNER_WIDTH);
+  });
+});
+
+describe('formatSessionDuration', () => {
+  it('formats sub-hour spans in minutes', () => {
+    expect(formatSessionDuration(0)).toBe('<1 min');
+    expect(formatSessionDuration(29_000)).toBe('<1 min');
+    expect(formatSessionDuration(60_000)).toBe('1 min');
+    expect(formatSessionDuration(24 * 60_000)).toBe('24 min');
+    expect(formatSessionDuration(59 * 60_000)).toBe('59 min');
+  });
+
+  it('switches to h/min at the hour boundary, zero-padding minutes', () => {
+    expect(formatSessionDuration(60 * 60_000)).toBe('1 h');
+    expect(formatSessionDuration(65 * 60_000)).toBe('1 h 05 min');
+    expect(formatSessionDuration(135 * 60_000)).toBe('2 h 15 min');
+  });
+
+  it('collapses negative or non-finite spans to an em dash', () => {
+    expect(formatSessionDuration(-1)).toBe('—');
+    expect(formatSessionDuration(Number.NaN)).toBe('—');
+    expect(formatSessionDuration(Number.POSITIVE_INFINITY)).toBe('—');
+  });
+});
+
+describe('formatPortraitDate', () => {
+  it('renders an atlas-style long date', () => {
+    expect(formatPortraitDate(Date.parse('2026-07-10T10:00:00Z'))).toBe('10 July 2026');
+  });
+
+  it('collapses non-finite times to an em dash', () => {
+    expect(formatPortraitDate(Number.NaN)).toBe('—');
+  });
+});
+
+describe('defaultPortraitTitle', () => {
+  it("uses 'Session <short-id>', truncating long ids to 8 chars", () => {
+    expect(defaultPortraitTitle('dev-canvas')).toBe('Session dev-canvas');
+    expect(defaultPortraitTitle('0123456789abcdef-uuid')).toBe('Session 01234567');
+  });
+
+  it('falls back when no session id exists', () => {
+    expect(defaultPortraitTitle(undefined)).toBe('Session Portrait');
+    expect(defaultPortraitTitle('  ')).toBe('Session Portrait');
+  });
+});
+
+describe('portraitStatsLine / buildPortraitTitleBlock', () => {
+  it('builds the stats line with plural handling', () => {
+    expect(portraitStatsLine(14, 4)).toBe('14 concepts across 4 islands · plasticFlowers');
+    expect(portraitStatsLine(1, 1)).toBe('1 concept across 1 island · plasticFlowers');
+  });
+
+  it('drops the island clause when there are no islands', () => {
+    expect(portraitStatsLine(3, 0)).toBe('3 concepts · plasticFlowers');
+  });
+
+  it('assembles title, uppercased meta and stats lines', () => {
+    const block = buildPortraitTitleBlock({
+      title: 'Design Lecture',
+      dateLabel: '10 July 2026',
+      durationLabel: '29 min',
+      conceptCount: 14,
+      islandCount: 4,
+    });
+    expect(block.title).toBe('Design Lecture');
+    expect(block.meta).toBe('10 JULY 2026 · 29 MIN');
+    expect(block.stats).toBe('14 concepts across 4 islands · plasticFlowers');
+  });
+
+  it('skips empty meta parts', () => {
+    const block = buildPortraitTitleBlock({
+      title: 't',
+      dateLabel: '10 July 2026',
+      durationLabel: '',
+      conceptCount: 0,
+      islandCount: 0,
+    });
+    expect(block.meta).toBe('10 JULY 2026');
+  });
+});
+
+describe('birthRampStops', () => {
+  it('starts at dawn, passes moss at the midpoint and ends at amber', () => {
+    const stops = birthRampStops(9);
+    expect(stops[0]).toEqual({ offset: 0, color: BIRTH_DAWN });
+    expect(stops[4]).toEqual({ offset: 0.5, color: BIRTH_MOSS });
+    expect(stops[8]).toEqual({ offset: 1, color: BIRTH_AMBER });
+  });
+
+  it('offsets are evenly spaced in [0, 1] and clamp to at least two stops', () => {
+    const stops = birthRampStops(5);
+    expect(stops.map((s) => s.offset)).toEqual([0, 0.25, 0.5, 0.75, 1]);
+    expect(birthRampStops(1)).toHaveLength(2);
+  });
+});
+
+describe('portraitLegendLayout', () => {
+  it('anchors the bar bottom-right inside the neatline', () => {
+    const layout = portraitLegendLayout(1200, 800);
+    expect(layout.bar.x + layout.bar.width).toBe(1200 - PORTRAIT_LEGEND_INSET);
+    expect(layout.tickY).toBe(800 - PORTRAIT_LEGEND_INSET);
+    // Inside the inner neatline on both axes.
+    expect(layout.bar.x).toBeGreaterThan(NEATLINE_OUTER_INSET + NEATLINE_GAP);
+    expect(layout.bar.y + layout.bar.height).toBeLessThan(
+      800 - NEATLINE_OUTER_INSET - NEATLINE_GAP
+    );
+  });
+
+  it('stacks the caption above the bar and the ticks below it', () => {
+    const layout = portraitLegendLayout(1200, 800);
+    expect(layout.captionY).toBeLessThan(layout.bar.y);
+    expect(layout.tickY).toBeGreaterThan(layout.bar.y + layout.bar.height);
+  });
+
+  it('labels the ramp from minute 0 to the hue-span end', () => {
+    const layout = portraitLegendLayout(1200, 800);
+    expect(layout.minLabel).toBe('0 min');
+    expect(layout.maxLabel).toBe(`${SESSION_HUE_SPAN_MS / 60_000}+ min`);
+    expect(layout.caption).toBe('colour = when the idea appeared');
   });
 });

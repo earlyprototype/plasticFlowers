@@ -294,3 +294,173 @@ export function isCartographyEnabled(
 ): boolean {
   return value !== '0' && value !== 'false';
 }
+
+// --- Move 5: the session portrait --------------------------------------------
+//
+// Portrait mode is the presentation render of the finished map: ghosts hidden,
+// camera fitted, and a chrome layer drawn ABOVE the graph in screen
+// coordinates — a double-rule neatline (atlas plate style), a title block and
+// a time-ramp legend. Everything below is pure geometry/text so it can be
+// unit-tested; the impure canvas work lives in ../rendering/portraitOverlay.ts.
+
+/** Outer neatline inset from the canvas edge (CSS px). */
+export const NEATLINE_OUTER_INSET = 14;
+/** Gap between the outer and inner neatline rules (CSS px). */
+export const NEATLINE_GAP = 6;
+/** Stroke width of the outer (heavy) neatline rule. */
+export const NEATLINE_OUTER_WIDTH = 1.6;
+/** Stroke width of the inner (hairline) neatline rule. */
+export const NEATLINE_INNER_WIDTH = 0.6;
+
+/** Camera padding (px) when fitting the confirmed graph on portrait entry. */
+export const PORTRAIT_FIT_PADDING = 96;
+
+/** Portrait typography — mirrors the established serif/sans tokens. */
+export const PORTRAIT_TITLE_FONT =
+  "600 26px 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif";
+export const PORTRAIT_META_FONT = '600 11px Nunito, system-ui, sans-serif';
+export const PORTRAIT_STATS_FONT = '400 11px Nunito, system-ui, sans-serif';
+export const PORTRAIT_TICK_FONT = '600 10px Nunito, system-ui, sans-serif';
+export const PORTRAIT_CAPTION_FONT =
+  "italic 400 11px 'Iowan Old Style', 'Palatino Linotype', Palatino, Georgia, serif";
+
+export interface Rect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The two neatline rectangles (outer heavy rule, inner hairline). */
+export function neatlineRects(width: number, height: number): { outer: Rect; inner: Rect } {
+  const o = NEATLINE_OUTER_INSET;
+  const i = NEATLINE_OUTER_INSET + NEATLINE_GAP;
+  return {
+    outer: { x: o, y: o, width: width - 2 * o, height: height - 2 * o },
+    inner: { x: i, y: i, width: width - 2 * i, height: height - 2 * i },
+  };
+}
+
+/**
+ * Session duration label from a millisecond span. Sub-minute sessions read
+ * '<1 min'; an hour boundary switches to 'H h MM min'. Negative or non-finite
+ * spans (no dated nodes yet) collapse to an em dash.
+ */
+export function formatSessionDuration(spanMs: number): string {
+  if (!Number.isFinite(spanMs) || spanMs < 0) return '—';
+  const totalMin = Math.round(spanMs / 60_000);
+  if (totalMin < 1) return '<1 min';
+  if (totalMin < 60) return `${totalMin} min`;
+  const hours = Math.floor(totalMin / 60);
+  const minutes = totalMin % 60;
+  return minutes === 0 ? `${hours} h` : `${hours} h ${String(minutes).padStart(2, '0')} min`;
+}
+
+/** Atlas-style date label ('10 July 2026'); non-finite times → em dash. */
+export function formatPortraitDate(ms: number, locale = 'en-GB'): string {
+  if (!Number.isFinite(ms)) return '—';
+  return new Date(ms).toLocaleDateString(locale, {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+}
+
+/**
+ * Default portrait title: sessions only have ids today, so the plate reads
+ * 'Session <short-id>' (long ids truncate to 8 chars). Persisting a custom
+ * title to the backend is a follow-up — the freetext input is local state.
+ */
+export function defaultPortraitTitle(sessionId?: string | null): string {
+  const id = sessionId?.trim();
+  if (!id) return 'Session Portrait';
+  return `Session ${id.length > 12 ? id.slice(0, 8) : id}`;
+}
+
+/** 'N concepts across M islands · plasticFlowers' (singulars handled). */
+export function portraitStatsLine(conceptCount: number, islandCount: number): string {
+  const concepts = `${conceptCount} ${conceptCount === 1 ? 'concept' : 'concepts'}`;
+  if (islandCount <= 0) return `${concepts} · plasticFlowers`;
+  const islands = `${islandCount} ${islandCount === 1 ? 'island' : 'islands'}`;
+  return `${concepts} across ${islands} · plasticFlowers`;
+}
+
+export interface PortraitTitleBlock {
+  /** Serif headline. */
+  title: string;
+  /** Small-caps meta line: 'DATE · DURATION'. */
+  meta: string;
+  /** Sans stats line: 'N concepts across M islands · plasticFlowers'. */
+  stats: string;
+}
+
+/** Assemble the three title-block lines drawn top-left of the plate. */
+export function buildPortraitTitleBlock(args: {
+  title: string;
+  dateLabel: string;
+  durationLabel: string;
+  conceptCount: number;
+  islandCount: number;
+}): PortraitTitleBlock {
+  const meta = [args.dateLabel, args.durationLabel]
+    .filter((part) => part.length > 0)
+    .join(' · ')
+    .toUpperCase();
+  return {
+    title: args.title,
+    meta,
+    stats: portraitStatsLine(args.conceptCount, args.islandCount),
+  };
+}
+
+/**
+ * Evenly spaced gradient stops sampled from the birth-colour ramp, for the
+ * legend bar. First stop is dawn, the midpoint is moss, the last is amber.
+ */
+export function birthRampStops(samples = 9): Array<{ offset: number; color: string }> {
+  const count = Math.max(2, Math.floor(samples));
+  const stops: Array<{ offset: number; color: string }> = [];
+  for (let i = 0; i < count; i += 1) {
+    const offset = i / (count - 1);
+    stops.push({ offset, color: birthColor(offset, 0, 1) });
+  }
+  return stops;
+}
+
+/** Width/height of the legend gradient bar (CSS px). */
+export const PORTRAIT_LEGEND_BAR_WIDTH = 150;
+export const PORTRAIT_LEGEND_BAR_HEIGHT = 8;
+/** Legend inset from the canvas edge (clears the inner neatline). */
+export const PORTRAIT_LEGEND_INSET = NEATLINE_OUTER_INSET + NEATLINE_GAP + 16;
+
+export interface PortraitLegendLayout {
+  /** Gradient bar rectangle. */
+  bar: Rect;
+  /** Baseline for the '0 min' / '30+ min' tick labels (below the bar). */
+  tickY: number;
+  /** Baseline for the caption ('colour = when the idea appeared'), above the bar. */
+  captionY: number;
+  minLabel: string;
+  maxLabel: string;
+  caption: string;
+}
+
+/** Bottom-right legend layout: caption above, gradient bar, ticks below. */
+export function portraitLegendLayout(width: number, height: number): PortraitLegendLayout {
+  const rightEdge = width - PORTRAIT_LEGEND_INSET;
+  const tickY = height - PORTRAIT_LEGEND_INSET;
+  const barY = tickY - 12 - PORTRAIT_LEGEND_BAR_HEIGHT;
+  return {
+    bar: {
+      x: rightEdge - PORTRAIT_LEGEND_BAR_WIDTH,
+      y: barY,
+      width: PORTRAIT_LEGEND_BAR_WIDTH,
+      height: PORTRAIT_LEGEND_BAR_HEIGHT,
+    },
+    tickY,
+    captionY: barY - 9,
+    minLabel: '0 min',
+    maxLabel: `${SESSION_HUE_SPAN_MS / 60_000}+ min`,
+    caption: 'colour = when the idea appeared',
+  };
+}

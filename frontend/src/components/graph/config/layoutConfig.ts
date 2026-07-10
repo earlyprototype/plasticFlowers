@@ -223,6 +223,14 @@ export const STYLE_CONFIG = [
       opacity: 0.7, // More subtle (de-emphasise cluster connections)
     },
   },
+  {
+    // Portrait mode (Move 5): ghosts and mid-wilt leftovers are hidden while
+    // the plate is presented; GraphCanvas toggles this class on entry/exit.
+    selector: '.portrait-hidden',
+    style: {
+      display: 'none',
+    },
+  },
 ] as const;
 
 /**

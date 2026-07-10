@@ -10,10 +10,21 @@ import type { ConnectionState } from '../../hooks/useSSE';
 import { calculateLayout } from './layout/layoutEngine';
 import { syncGraphStructure } from './rendering/graphRenderer';
 import { createTerrainUnderlay, type TerrainUnderlay } from './rendering/terrainUnderlay';
+import {
+  createPortraitOverlay,
+  type PortraitInfo,
+  type PortraitOverlay,
+} from './rendering/portraitOverlay';
 import { AnimationController } from './animation/animationController';
 import { applyAdaptiveStemPetalPositioning } from './layout/stemPetalPositioning';
 import { LAYOUT_CONFIG, ANIMATION_CONFIG, buildStyleConfig } from './config/layoutConfig';
-import { isCartographyEnabled } from './config/cartography';
+import {
+  PORTRAIT_FIT_PADDING,
+  defaultPortraitTitle,
+  formatPortraitDate,
+  formatSessionDuration,
+  isCartographyEnabled,
+} from './config/cartography';
 
 // Register the fcose layout once at module scope (module evaluation already
 // runs exactly once per bundle — a mutable guard flag was a no-op).
@@ -30,6 +41,19 @@ export type GraphCanvasProps = {
   connectionState?: ConnectionState;
   lastChunkError?: string | null;
   className?: string;
+  /**
+   * Portrait mode (Move 5): present the finished map as a keepable plate —
+   * ghosts hidden, camera fitted to the confirmed graph, neatline + title
+   * block + time legend drawn on an overlay canvas, and a 'Save portrait'
+   * PNG export. Requires cartography mode (ignored when the flag is off).
+   */
+  portrait?: boolean;
+  /** Custom plate title; falls back to 'Session <short-id>'. */
+  portraitTitle?: string;
+  /** Session id — used for the default title and the export filename. */
+  sessionId?: string;
+  /** ISO end time (if the session ended) — extends the duration line. */
+  sessionEndedAt?: string | null;
 };
 
 const connectionMessages: Record<ConnectionState, string> = {
@@ -66,10 +90,17 @@ export function GraphCanvas({
   connectionState = 'idle',
   lastChunkError,
   className,
+  portrait = false,
+  portraitTitle,
+  sessionId,
+  sessionEndedAt,
 }: GraphCanvasProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const underlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const terrainRef = useRef<TerrainUnderlay | null>(null);
+  const portraitCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const portraitOverlayRef = useRef<PortraitOverlay | null>(null);
+  const portraitActiveRef = useRef(false);
   const cyRef = useRef<Core | null>(null);
   // Lazy init: `useRef(new AnimationController())` would construct (and throw
   // away) a fresh instance on every render.
@@ -91,7 +122,39 @@ export function GraphCanvas({
       `graph-canvas__status ${statusClassMap[connectionState] ?? 'graph-canvas__status--muted'}`,
     [connectionState]
   );
-  
+
+  // Portrait requires cartography — with the flag off the prop is inert.
+  const portraitActive = CARTOGRAPHY_ENABLED && portrait;
+
+  // Title-block content, derived from live data: duration runs from the
+  // earliest node birth to the latest (or to the session end when known).
+  const portraitInfo = useMemo<PortraitInfo>(() => {
+    let earliest = Number.POSITIVE_INFINITY;
+    let latest = Number.NEGATIVE_INFINITY;
+    for (const node of nodes) {
+      const ms = Date.parse(node.created_at);
+      if (!Number.isFinite(ms)) continue;
+      if (ms < earliest) earliest = ms;
+      if (ms > latest) latest = ms;
+    }
+    const endedMs = sessionEndedAt ? Date.parse(sessionEndedAt) : Number.NaN;
+    if (Number.isFinite(endedMs) && endedMs > latest) latest = endedMs;
+    const hasSpan = Number.isFinite(earliest) && latest >= earliest;
+    return {
+      title: portraitTitle?.trim() || defaultPortraitTitle(sessionId),
+      dateLabel: formatPortraitDate(hasSpan ? earliest : Date.now()),
+      durationLabel: hasSpan ? formatSessionDuration(latest - earliest) : '—',
+      conceptCount: nodes.filter((n) => n.status === 'solid').length,
+      islandCount: flowers.length,
+    };
+  }, [nodes, flowers, portraitTitle, sessionId, sessionEndedAt]);
+
+  const portraitInfoRef = useRef(portraitInfo);
+  useEffect(() => {
+    portraitInfoRef.current = portraitInfo;
+    portraitOverlayRef.current?.setInfo(portraitInfo);
+  }, [portraitInfo]);
+
   // Keep current data ref updated for event handlers
   useEffect(() => {
     currentDataRef.current = { nodes, flowers };
@@ -317,6 +380,90 @@ export function GraphCanvas({
     };
   }, [getAnimController]);
 
+  // Portrait mode entry/exit. Entering hides ghosts (and any mid-wilt
+  // leftovers), remembers the camera and fits it to the confirmed graph, and
+  // mounts the chrome overlay. Interaction stays ON — a portrait you can
+  // still explore is better; we only fit on entry. Exiting restores the
+  // hidden elements and the exact previous viewport.
+  useEffect(() => {
+    portraitActiveRef.current = portraitActive;
+    const cy = cyRef.current;
+    const canvas = portraitCanvasRef.current;
+    if (!portraitActive || !cy || !canvas) return;
+
+    const overlay = createPortraitOverlay(cy, canvas);
+    portraitOverlayRef.current = overlay;
+    overlay.setInfo(portraitInfoRef.current);
+
+    const previousViewport = { zoom: cy.zoom(), pan: { ...cy.pan() } };
+    cy.elements('.ghost, .wilting').addClass('portrait-hidden');
+    const kept = cy.elements().not('.portrait-hidden');
+    if (kept.length > 0) {
+      cy.animate(
+        { fit: { eles: kept, padding: PORTRAIT_FIT_PADDING } },
+        { duration: 700, easing: 'ease-in-out' }
+      );
+    }
+
+    return () => {
+      portraitActiveRef.current = false;
+      overlay.destroy();
+      portraitOverlayRef.current = null;
+      if (!cy.destroyed()) {
+        cy.elements('.portrait-hidden').removeClass('portrait-hidden');
+        cy.viewport({ zoom: previousViewport.zoom, pan: previousViewport.pan });
+      }
+    };
+  }, [portraitActive]);
+
+  // 'Save portrait' — composite the three layers at 2x resolution into one
+  // PNG: paper + terrain (re-rendered at export scale), the Cytoscape graph
+  // (cy.png at the same scale, transparent bg), then the portrait chrome.
+  // Each layer re-renders at export resolution, so the file is crisp rather
+  // than an upscaled copy of the live canvases.
+  const handleSavePortrait = useCallback(async () => {
+    const cy = cyRef.current;
+    const terrain = terrainRef.current;
+    const overlay = portraitOverlayRef.current;
+    const container = containerRef.current;
+    if (!cy || !terrain || !overlay || !container) return;
+
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    const scale = 2;
+    const exportCanvas = document.createElement('canvas');
+    exportCanvas.width = Math.round(width * scale);
+    exportCanvas.height = Math.round(height * scale);
+    const ctx = exportCanvas.getContext('2d');
+    if (!ctx) return;
+
+    terrain.renderTo(ctx, width, height, scale);
+
+    const graphPng = cy.png({ scale, full: false, bg: 'transparent' });
+    await new Promise<void>((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => {
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.drawImage(img, 0, 0, exportCanvas.width, exportCanvas.height);
+        resolve();
+      };
+      img.onerror = () => reject(new Error('Portrait export: failed to rasterise the graph'));
+      img.src = graphPng;
+    });
+
+    overlay.renderTo(ctx, width, height, scale);
+
+    const stamp = sessionId?.trim()
+      ? sessionId.trim().slice(0, 8)
+      : new Date().toISOString().slice(0, 10);
+    const link = document.createElement('a');
+    link.href = exportCanvas.toDataURL('image/png');
+    link.download = `plasticflowers-portrait-${stamp}.png`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  }, [sessionId]);
+
   // Debounced graph update with clean orchestration
   useEffect(() => {
     const cy = cyRef.current;
@@ -407,6 +554,12 @@ export function GraphCanvas({
       // during the upcoming animations are tracked by its own listeners.
       terrainRef.current?.setFlowers(flowers);
 
+      // 3.7. Portrait mode: elements added/updated by this sync may include
+      // new ghosts — keep them hidden while the plate is presented.
+      if (portraitActiveRef.current) {
+        cy.elements('.ghost, .wilting').addClass('portrait-hidden');
+      }
+
       // 4. Execute the growth sequence (camera-first, then bloom + sprout)
       await controller.executeAnimationSequence(cy, syncResult);
       if (cancelled || cy.destroyed()) return;
@@ -441,50 +594,71 @@ export function GraphCanvas({
 
   return (
     <div className={`graph-canvas ${className ?? ''}`}>
-      <div className={statusClass}>{connectionMessages[connectionState]}</div>
-      
-      <div className="graph-canvas__controls">
-        <button onClick={handleFit} title="Fit to view" aria-label="Fit to view">
-          ⊡
-        </button>
-        <button onClick={handleZoomIn} title="Zoom in" aria-label="Zoom in">
-          +
-        </button>
-        <button onClick={handleZoomOut} title="Zoom out" aria-label="Zoom out">
-          −
-        </button>
-        <button onClick={handleReset} title="Reset view" aria-label="Reset view">
-          ↺
-        </button>
-        <button 
-          onClick={handlePanToLatest} 
-          title="Pan to latest node" 
-          aria-label="Pan to latest node"
-          disabled={nodes.length === 0}
-        >
-          ⟶
-        </button>
-      </div>
-      
+      {portraitActive ? (
+        // Portrait chrome replaces the live HUD (status badge, zoom controls,
+        // ghost legend) so the plate reads clean; only the export action stays.
+        <div className="graph-canvas__portrait-actions">
+          <button onClick={handleSavePortrait} id="save-portrait">
+            Save portrait
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className={statusClass}>{connectionMessages[connectionState]}</div>
+
+          <div className="graph-canvas__controls">
+            <button onClick={handleFit} title="Fit to view" aria-label="Fit to view">
+              ⊡
+            </button>
+            <button onClick={handleZoomIn} title="Zoom in" aria-label="Zoom in">
+              +
+            </button>
+            <button onClick={handleZoomOut} title="Zoom out" aria-label="Zoom out">
+              −
+            </button>
+            <button onClick={handleReset} title="Reset view" aria-label="Reset view">
+              ↺
+            </button>
+            <button
+              onClick={handlePanToLatest}
+              title="Pan to latest node"
+              aria-label="Pan to latest node"
+              disabled={nodes.length === 0}
+            >
+              ⟶
+            </button>
+          </div>
+
+          <div className="graph-canvas__legend">
+            <div className="graph-canvas__legend-item">
+              <div className="graph-canvas__legend-dot graph-canvas__legend-dot--ghost" />
+              <span>Ghost: unconfirmed</span>
+            </div>
+            <div className="graph-canvas__legend-item">
+              <div className="graph-canvas__legend-dot graph-canvas__legend-dot--solid" />
+              <span>Solid: confirmed</span>
+            </div>
+          </div>
+        </>
+      )}
+
       {lastChunkError ? (
         <div className="graph-canvas__toast" role="status">
           Chunk skipped: {lastChunkError}
         </div>
       ) : null}
-      <div className="graph-canvas__legend">
-        <div className="graph-canvas__legend-item">
-          <div className="graph-canvas__legend-dot graph-canvas__legend-dot--ghost" />
-          <span>Ghost: unconfirmed</span>
-        </div>
-        <div className="graph-canvas__legend-item">
-          <div className="graph-canvas__legend-dot graph-canvas__legend-dot--solid" />
-          <span>Solid: confirmed</span>
-        </div>
-      </div>
       {CARTOGRAPHY_ENABLED ? (
         <canvas ref={underlayCanvasRef} className="graph-canvas__underlay" aria-hidden="true" />
       ) : null}
       <div ref={containerRef} className="graph-canvas__viewport" />
+      {CARTOGRAPHY_ENABLED ? (
+        <canvas
+          ref={portraitCanvasRef}
+          className="graph-canvas__portrait"
+          aria-hidden="true"
+          style={{ display: portraitActive ? 'block' : 'none' }}
+        />
+      ) : null}
     </div>
   );
 }
