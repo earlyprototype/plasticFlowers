@@ -20,7 +20,7 @@ from .events import (
     ReferenceAddedPayload,
 )
 from .flower import Flower, FlowerBridge
-from .graph import FlowersResponse, GraphState, GraphStateResponse, NodesResponse, RelationshipsResponse
+from .graph import FlowersResponse, GraphState, GraphStateResponse, NodesResponse, ReferencesResponse, RelationshipsResponse
 from .node import Node
 from .relationship import Relationship
 from .export import SessionExportBundle

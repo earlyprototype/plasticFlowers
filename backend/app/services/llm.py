@@ -311,9 +311,11 @@ def _extract_chunk_text(prompt: str) -> str:
     if marker not in prompt:
         return prompt
     after_marker = prompt.split(marker, 1)[1]
-    end_marker = "## OUTPUT"
-    if end_marker in after_marker:
-        after_marker = after_marker.split(end_marker, 1)[0]
+    # Cut at the next section header (## INSTRUCTIONS, ## OUTPUT, ...) so the
+    # instruction/output scaffolding never leaks into synthesised nodes.
+    next_section = re.search(r"\n##\s", after_marker)
+    if next_section:
+        after_marker = after_marker[: next_section.start()]
     return after_marker.strip()
 
 
