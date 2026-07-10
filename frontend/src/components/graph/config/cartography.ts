@@ -199,6 +199,92 @@ export function arcLabelPlacements(
   return placements;
 }
 
+// --- Move 4: time as colour --------------------------------------------------
+//
+// Every node keeps the hue of its birth moment, so the finished map encodes
+// chronology spatially. The ramp runs dawn indigo → moss → late amber with
+// piecewise-linear RGB interpolation (first half dawn→moss, second half
+// moss→amber).
+//
+// SPAN CONTRACT: hue is a function of ABSOLUTE birth time mapped over a FIXED
+// reference window of SESSION_HUE_SPAN_MS starting at the session start
+// (earliest node birth currently in the graph). Minute 0 = dawn, the midpoint
+// = moss, anything at/after the end of the window = amber. Because the window
+// is fixed, a node's colour never changes as the session extends — history is
+// never repainted — and there is no dependency on a session "end". Sessions
+// shorter than the window simply never reach amber, which is honest: the map
+// only earns its sunset tones by running long.
+
+/** Ramp stop: dawn indigo — the session's opening minutes. */
+export const BIRTH_DAWN = '#6272B5';
+/** Ramp stop: moss — the middle of the reference window. */
+export const BIRTH_MOSS = '#4F8F68';
+/** Ramp stop: late amber — at/after the end of the reference window. */
+export const BIRTH_AMBER = '#C79A3F';
+
+/** Fixed reference window for the birth-colour ramp (30 minutes). */
+export const SESSION_HUE_SPAN_MS = 30 * 60 * 1000;
+
+/**
+ * Node "paper" fill (the cartography node background) that birth colours are
+ * mixed toward for legible fills — labels sit on near-paper, never on a
+ * saturated swatch.
+ */
+export const BIRTH_PAPER = '#FBFAF2';
+/** How far a solid node's fill is mixed toward paper (0 = pure birth colour). */
+export const BIRTH_FILL_PAPER_MIX = 0.75;
+/** How far a ghost's dashed border tint is mixed toward paper. */
+export const BIRTH_GHOST_PAPER_MIX = 0.5;
+
+function hexToRgb(hex: string): [number, number, number] {
+  const value = parseInt(hex.slice(1), 16);
+  return [(value >> 16) & 0xff, (value >> 8) & 0xff, value & 0xff];
+}
+
+function rgbToHex(r: number, g: number, b: number): string {
+  const to2 = (c: number) => Math.round(c).toString(16).padStart(2, '0').toUpperCase();
+  return `#${to2(r)}${to2(g)}${to2(b)}`;
+}
+
+/**
+ * Linear RGB mix of two hex colours: t = 0 → `a`, t = 1 → `b` (t clamped).
+ * Deterministic (pure arithmetic + rounding), returns uppercase hex.
+ */
+export function mixHex(a: string, b: string, t: number): string {
+  const tt = Math.min(Math.max(t, 0), 1);
+  const [ar, ag, ab] = hexToRgb(a);
+  const [br, bg, bb] = hexToRgb(b);
+  return rgbToHex(ar + (br - ar) * tt, ag + (bg - ag) * tt, ab + (bb - ab) * tt);
+}
+
+/**
+ * The birth colour of a node born at `birthMs`, mapped over the reference
+ * window [sessionStartMs, sessionEndMs]: 0 → dawn, 0.5 → moss, 1 → amber,
+ * piecewise-linear in RGB. Times outside the window clamp to the nearest
+ * stop; a degenerate (zero/negative-length or non-finite) window yields dawn.
+ */
+export function birthColor(
+  birthMs: number,
+  sessionStartMs: number,
+  sessionEndMs: number
+): string {
+  const span = sessionEndMs - sessionStartMs;
+  let t = span > 0 ? (birthMs - sessionStartMs) / span : 0;
+  if (!Number.isFinite(t)) t = 0;
+  t = Math.min(Math.max(t, 0), 1);
+  return t <= 0.5 ? mixHex(BIRTH_DAWN, BIRTH_MOSS, t * 2) : mixHex(BIRTH_MOSS, BIRTH_AMBER, (t - 0.5) * 2);
+}
+
+/** Legible node fill for a birth colour: mixed well toward paper. */
+export function birthFill(color: string): string {
+  return mixHex(color, BIRTH_PAPER, BIRTH_FILL_PAPER_MIX);
+}
+
+/** Reduced-strength tint for a ghost's dashed border. */
+export function birthGhostTint(color: string): string {
+  return mixHex(color, BIRTH_PAPER, BIRTH_GHOST_PAPER_MIX);
+}
+
 /**
  * Feature flag: NEXT_PUBLIC_CARTOGRAPHY, default ON.
  * Only the literal strings '0' and 'false' disable it.

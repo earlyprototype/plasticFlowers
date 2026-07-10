@@ -6,6 +6,14 @@ import {
   type PendingRemovalHandle,
 } from './graphRenderer';
 import { AnimationController, WILT_MS } from '../animation/animationController';
+import {
+  BIRTH_AMBER,
+  BIRTH_DAWN,
+  BIRTH_MOSS,
+  SESSION_HUE_SPAN_MS,
+  birthFill,
+  birthGhostTint,
+} from '../config/cartography';
 import type { Node, Relationship, Flower } from '../../../lib/types';
 import type { LayoutResult } from '../layout/layoutEngine';
 
@@ -765,6 +773,80 @@ describe('graphRenderer', () => {
         emptyLayout()
       );
       expect(result.confirmedNodeIds.size).toBe(0);
+    });
+  });
+
+  describe('time as colour (birth colour data)', () => {
+    const SESSION_START = '2026-07-10T10:00:00Z';
+    const startMs = Date.parse(SESSION_START);
+
+    const bornAt = (id: string, offsetMs: number): Node => ({
+      id,
+      label: id,
+      confidence: 0.8,
+      mentions: 1,
+      timestamps: [100],
+      inferred_type: 'concept',
+      flower_id: null,
+      created_at: new Date(startMs + offsetMs).toISOString(),
+      status: 'solid',
+    });
+
+    const emptyLayout = (): LayoutResult => ({
+      nodePositions: new Map(),
+      lockedNodeIds: new Set(),
+      isolatedNodeIds: new Set(),
+      flowerStructureChanged: false,
+    });
+
+    it('stamps birthColor over the fixed window from the earliest birth', () => {
+      const nodes = [
+        bornAt('n-dawn', 0),
+        bornAt('n-moss', SESSION_HUE_SPAN_MS / 2),
+        bornAt('n-amber', SESSION_HUE_SPAN_MS + 5 * 60_000), // past the window → clamps
+      ];
+      syncGraphStructure(cy, { nodes, relationships: [], flowers: [] }, emptyLayout());
+
+      expect(cy.getElementById('n-dawn').data('birthColor')).toBe(BIRTH_DAWN);
+      expect(cy.getElementById('n-moss').data('birthColor')).toBe(BIRTH_MOSS);
+      expect(cy.getElementById('n-amber').data('birthColor')).toBe(BIRTH_AMBER);
+    });
+
+    it('stamps the paper-mixed fill and ghost tint alongside the pure colour', () => {
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('n1', 0)], relationships: [], flowers: [] },
+        emptyLayout()
+      );
+      const ele = cy.getElementById('n1');
+      expect(ele.data('birthFill')).toBe(birthFill(BIRTH_DAWN));
+      expect(ele.data('birthGhost')).toBe(birthGhostTint(BIRTH_DAWN));
+    });
+
+    it('never repaints existing nodes as later births extend the session', () => {
+      // Early session: only the first node exists.
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('n1', 0)], relationships: [], flowers: [] },
+        emptyLayout()
+      );
+      const before = cy.getElementById('n1').data('birthColor');
+      expect(before).toBe(BIRTH_DAWN);
+
+      // 25 minutes later a new node arrives — n1's colour must not shift.
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('n1', 0), bornAt('n2', 25 * 60_000)], relationships: [], flowers: [] },
+        emptyLayout()
+      );
+      expect(cy.getElementById('n1').data('birthColor')).toBe(before);
+      expect(cy.getElementById('n2').data('birthColor')).not.toBe(BIRTH_DAWN);
+    });
+
+    it('falls back to dawn when no created_at parses (degenerate window)', () => {
+      const broken: Node = { ...bornAt('n1', 0), created_at: 'not-a-date' };
+      syncGraphStructure(cy, { nodes: [broken], relationships: [], flowers: [] }, emptyLayout());
+      expect(cy.getElementById('n1').data('birthColor')).toBe(BIRTH_DAWN);
     });
   });
 

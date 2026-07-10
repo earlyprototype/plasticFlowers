@@ -261,34 +261,42 @@ const CARTOGRAPHY_STYLE_OVERRIDES = [
     style: {
       // Legacy 0.15 disappears entirely against the chart paper; keep
       // ghosts clearly fainter than solid nodes but still readable.
+      // Time as colour (Move 4): the dashed border carries the birth hue at
+      // reduced strength (paper-mixed by the renderer) — ghosts stay ghosts,
+      // but even rumours know when they were first whispered.
       opacity: 0.45,
       'font-style': 'italic',
       'font-size': '10px',
       'text-opacity': 0.75,
       color: '#6B7263',
-      'border-color': '#9AA28C',
+      'border-color': 'data(birthGhost)',
       'background-color': '#F4F3E9',
     },
   },
   {
     selector: 'node.solid',
     style: {
+      // Time as colour (Move 4): fill is the birth hue mixed well toward
+      // paper (data(birthFill)) so the ink label stays legible; the border
+      // carries the pure birth colour — linework does the talking.
       'font-weight': 600,
-      'border-color': '#42493E',
+      'border-color': 'data(birthColor)',
       'border-width': 1.5, // was 3 — map linework, not marker pen
-      'background-color': '#FBFAF2',
+      'background-color': 'data(birthFill)',
     },
   },
   {
     selector: 'node.stem',
     style: {
+      // Stems keep the serif "capital city" typography; the birth colour is
+      // the border accent only — label ink stays dark and readable.
       'font-family': CARTOGRAPHY_SERIF_STACK,
       'font-size': '14px',
       'font-weight': 600,
       color: '#38301F',
-      'border-color': '#A98F5A', // surveyed-sepia accent
+      'border-color': 'data(birthColor)',
       'border-width': 2, // was 5 — keep prominence without the heavy frame
-      'background-color': '#F3EDDB',
+      'background-color': 'data(birthFill)',
     },
   },
   {

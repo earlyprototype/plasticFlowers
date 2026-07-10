@@ -1,7 +1,7 @@
 import type { Core, EdgeSingular, NodeSingular } from 'cytoscape';
 import type { SyncResult } from '../rendering/graphRenderer';
 import { PENDING_REMOVAL_SCRATCH, type PendingRemovalHandle } from '../rendering/graphRenderer';
-import { CARTOGRAPHY_PALETTE } from '../config/cartography';
+import { CARTOGRAPHY_PALETTE, isCartographyEnabled } from '../config/cartography';
 
 /**
  * Animation Controller — growth is the only animation grammar.
@@ -47,7 +47,12 @@ export const WILT_MS = 900;
 const WILT_SCALE = 0.35;
 const WILT_SINK_PX = 6;
 
-/** Ring-pulse ink — the surveyed-sepia stem accent from the cartography set. */
+/**
+ * Ring-pulse ink fallback — the surveyed-sepia stem accent. With cartography
+ * on, the pulse uses the node's own birth colour (data('birthColor'), Move 4)
+ * so a confirmation flashes in the hue of the idea's birth moment; the sepia
+ * covers legacy mode and nodes without a stamped colour.
+ */
 const BLOOM_COLOR = '#A98F5A';
 
 /**
@@ -322,9 +327,12 @@ export class AnimationController {
       const node = cy.getElementById(id);
       if (!node.nonempty() || !node.isNode()) return;
 
+      const ringColor =
+        (isCartographyEnabled() ? (node.data('birthColor') as string | undefined) : undefined) ??
+        BLOOM_COLOR;
       node.style({
         'overlay-shape': 'ellipse',
-        'overlay-color': BLOOM_COLOR,
+        'overlay-color': ringColor,
         'overlay-opacity': 0.4,
         'overlay-padding': 2,
       });

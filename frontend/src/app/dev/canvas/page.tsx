@@ -18,9 +18,21 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { GraphCanvas } from '../../../components/graph';
+import {
+  BIRTH_AMBER,
+  BIRTH_DAWN,
+  BIRTH_MOSS,
+  SESSION_HUE_SPAN_MS,
+  isCartographyEnabled,
+} from '../../../components/graph/config/cartography';
 import type { Flower, Node, Relationship } from '../../../lib/types';
 
 const T0 = '2026-07-10T10:00:00Z';
+
+/** Fixture birth time: `minutes` after the session start (time-as-colour). */
+function atMinutes(minutes: number): string {
+  return new Date(Date.parse(T0) + minutes * 60_000).toISOString();
+}
 
 function makeNode(
   id: string,
@@ -64,40 +76,46 @@ function makeRel(
 
 // --- Fixture: a lecture on visual design fundamentals -----------------------
 
+// Birth times (created_at) are staggered across the
+// 30-minute time-as-colour window, in the same order as the Grow replay:
+// the hierarchy island is born at dawn (indigo), grids and typography span
+// the middle (moss), and color theory arrives late (amber).
 const FIXTURE_NODES: Node[] = [
-  // Flower 1 — Visual hierarchy
-  makeNode('n-hierarchy', 'visual hierarchy', 'f-hierarchy', { mentions: 7, timestamps: [12, 40, 95] }),
-  makeNode('n-contrast', 'contrast', 'f-hierarchy', { mentions: 4, timestamps: [18, 44] }),
-  makeNode('n-scale', 'scale', 'f-hierarchy', { mentions: 3, timestamps: [22] }),
-  makeNode('n-focal-point', 'focal point', 'f-hierarchy', { mentions: 2, timestamps: [30] }),
+  // Flower 1 — Visual hierarchy (minutes 0–2.5: dawn indigo)
+  makeNode('n-hierarchy', 'visual hierarchy', 'f-hierarchy', { mentions: 7, timestamps: [12, 40, 95], created_at: atMinutes(0) }),
+  makeNode('n-contrast', 'contrast', 'f-hierarchy', { mentions: 4, timestamps: [18, 44], created_at: atMinutes(1) }),
+  makeNode('n-scale', 'scale', 'f-hierarchy', { mentions: 3, timestamps: [22], created_at: atMinutes(1.5) }),
+  makeNode('n-focal-point', 'focal point', 'f-hierarchy', { mentions: 2, timestamps: [30], created_at: atMinutes(2.5) }),
 
-  // Flower 2 — Grid systems
-  makeNode('n-grid', 'grid systems', 'f-grid', { mentions: 6, timestamps: [120, 150] }),
-  makeNode('n-columns', 'column structure', 'f-grid', { mentions: 3, timestamps: [128] }),
-  makeNode('n-baseline', 'baseline rhythm', 'f-grid', { mentions: 2, timestamps: [135] }),
+  // Flower 2 — Grid systems (minutes 6–9: dawn → moss)
+  makeNode('n-grid', 'grid systems', 'f-grid', { mentions: 6, timestamps: [120, 150], created_at: atMinutes(6) }),
+  makeNode('n-columns', 'column structure', 'f-grid', { mentions: 3, timestamps: [128], created_at: atMinutes(7) }),
+  makeNode('n-baseline', 'baseline rhythm', 'f-grid', { mentions: 2, timestamps: [135], created_at: atMinutes(8) }),
   makeNode('n-swiss', 'swiss modernism', 'f-grid', {
     mentions: 1,
     timestamps: [142],
     status: 'ghost',
     confidence: 0.45,
+    created_at: atMinutes(9),
   }),
 
-  // Flower 3 — Typography
-  makeNode('n-typography', 'typography', 'f-type', { mentions: 8, timestamps: [200, 230, 260] }),
-  makeNode('n-serifs', 'serif faces', 'f-type', { mentions: 3, timestamps: [208] }),
-  makeNode('n-x-height', 'x-height', 'f-type', { mentions: 2, timestamps: [215] }),
-  makeNode('n-letterspacing', 'letterspacing', 'f-type', { mentions: 2, timestamps: [224] }),
+  // Flower 3 — Typography (minutes 13–16: moss)
+  makeNode('n-typography', 'typography', 'f-type', { mentions: 8, timestamps: [200, 230, 260], created_at: atMinutes(13) }),
+  makeNode('n-serifs', 'serif faces', 'f-type', { mentions: 3, timestamps: [208], created_at: atMinutes(14) }),
+  makeNode('n-x-height', 'x-height', 'f-type', { mentions: 2, timestamps: [215], created_at: atMinutes(15) }),
+  makeNode('n-letterspacing', 'letterspacing', 'f-type', { mentions: 2, timestamps: [224], created_at: atMinutes(16) }),
 
-  // Flower 4 — Color theory
-  makeNode('n-color', 'color theory', 'f-color', { mentions: 5, timestamps: [300, 320] }),
-  makeNode('n-warm-cool', 'warm vs cool', 'f-color', { mentions: 2, timestamps: [308] }),
-  makeNode('n-value', 'tonal value', 'f-color', { mentions: 3, timestamps: [314] }),
+  // Flower 4 — Color theory (minutes 24–29.5: late amber)
+  makeNode('n-color', 'color theory', 'f-color', { mentions: 5, timestamps: [300, 320], created_at: atMinutes(24) }),
+  makeNode('n-warm-cool', 'warm vs cool', 'f-color', { mentions: 2, timestamps: [308], created_at: atMinutes(26) }),
+  makeNode('n-value', 'tonal value', 'f-color', { mentions: 3, timestamps: [314], created_at: atMinutes(28) }),
   makeNode('n-albers', 'albers exercises', 'f-color', {
     mentions: 1,
     timestamps: [326],
     status: 'ghost',
     confidence: 0.4,
     inferred_type: 'reference',
+    created_at: atMinutes(29.5),
   }),
 ];
 
@@ -194,6 +212,7 @@ const fixtureFlower = (id: string): Flower => flowerById.get(id)!;
 const PRUNED_NODE: Node = makeNode('n-golden', 'golden ratio', 'f-hierarchy', {
   mentions: 1,
   timestamps: [52],
+  created_at: atMinutes(3),
 });
 const PRUNED_REL: Relationship = makeRel(
   'r-x1',
@@ -356,6 +375,32 @@ export default function CanvasDevPage() {
         >
           Reset
         </button>
+        {isCartographyEnabled() ? (
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              marginLeft: 'auto',
+              fontSize: '11px',
+              color: '#57534E',
+            }}
+          >
+            <span>0 min</span>
+            <div
+              aria-hidden="true"
+              style={{
+                width: '140px',
+                height: '10px',
+                borderRadius: '5px',
+                border: '1px solid #D6D3D1',
+                background: `linear-gradient(90deg, ${BIRTH_DAWN} 0%, ${BIRTH_MOSS} 50%, ${BIRTH_AMBER} 100%)`,
+              }}
+            />
+            <span>{SESSION_HUE_SPAN_MS / 60_000}+ min</span>
+            <span style={{ fontStyle: 'italic' }}>colour = when the idea appeared</span>
+          </div>
+        ) : null}
       </div>
       <GraphCanvas
         key={runId}

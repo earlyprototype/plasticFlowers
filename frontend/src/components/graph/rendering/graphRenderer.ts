@@ -1,6 +1,12 @@
 import type { Core, EdgeSingular, NodeSingular } from 'cytoscape';
 import type { Node, Relationship, Flower } from '../../../lib/types';
 import { computeSeedPosition, type LayoutResult } from '../layout/layoutEngine';
+import {
+  SESSION_HUE_SPAN_MS,
+  birthColor,
+  birthFill,
+  birthGhostTint,
+} from '../config/cartography';
 
 /**
  * Graph Renderer - Syncs data to Cytoscape
@@ -71,11 +77,20 @@ export function syncGraphStructure(
   const stemLookup = new Set(data.flowers.map((f) => f.stem_node_id).filter(Boolean));
   const flowerOrdinals = new Map(data.flowers.map((f, index) => [f.id, index]));
 
+  // Time-as-colour (Move 4): session start = earliest node birth currently in
+  // the graph. created_at is the truthful birth source — a real ISO datetime
+  // stamped by the backend — whereas timestamps[] are seconds relative to the
+  // session/page start, not absolute times. Colours are recomputed each sync
+  // but are deterministic in (created_at, sessionStart), and sessionStart is
+  // stable while the earliest node lives (backends only append later births),
+  // so existing nodes are never repainted as the session grows.
+  const sessionStartMs = earliestBirthMs(data.nodes);
+
   // 1. Sync flowers (compound nodes)
   syncFlowers(cy, data.flowers, data.nodes, result);
 
   // 2. Sync regular nodes
-  syncNodes(cy, data.nodes, stemLookup, flowerOrdinals, layoutResult, result, options);
+  syncNodes(cy, data.nodes, stemLookup, flowerOrdinals, sessionStartMs, layoutResult, result, options);
 
   // 3. Sync edges
   syncEdges(cy, data.relationships, result, options);
@@ -175,6 +190,19 @@ function syncFlowers(
 }
 
 /**
+ * Earliest finite birth time (ms since epoch) among the nodes, or NaN when
+ * none parses — birthColor treats a NaN window as degenerate (dawn).
+ */
+function earliestBirthMs(nodes: Node[]): number {
+  let earliest = Number.POSITIVE_INFINITY;
+  for (const node of nodes) {
+    const ms = Date.parse(node.created_at);
+    if (Number.isFinite(ms) && ms < earliest) earliest = ms;
+  }
+  return Number.isFinite(earliest) ? earliest : Number.NaN;
+}
+
+/**
  * Sync regular nodes
  */
 function syncNodes(
@@ -182,6 +210,7 @@ function syncNodes(
   nodes: Node[],
   stemLookup: Set<string>,
   flowerOrdinals: Map<string, number>,
+  sessionStartMs: number,
   layoutResult: LayoutResult,
   result: SyncResult,
   options: SyncOptions
@@ -207,6 +236,17 @@ function syncNodes(
     }
     
     const parentId = node.flower_id ?? null;
+
+    // Time as colour: the node's birth hue over the fixed reference window
+    // (see the SPAN CONTRACT in config/cartography.ts). Always stamped as
+    // data; only the cartography stylesheet/verbs consume it, so with the
+    // flag off the legacy palette is untouched.
+    const nodeBirthColor = birthColor(
+      Date.parse(node.created_at),
+      sessionStartMs,
+      sessionStartMs + SESSION_HUE_SPAN_MS
+    );
+
     const elementData: Record<string, unknown> = {
       id: node.id,
       label: node.label,
@@ -216,6 +256,9 @@ function syncNodes(
       mentions: node.mentions || 0, // CRITICAL: needed for stem-petal positioning
       timestamps: node.timestamps || [], // Also useful for temporal styling
       inferred_type: node.inferred_type || 'concept',
+      birthColor: nodeBirthColor, // pure ramp colour (borders, bloom ring)
+      birthFill: birthFill(nodeBirthColor), // paper-mixed fill (label legibility)
+      birthGhost: birthGhostTint(nodeBirthColor), // reduced-strength ghost border tint
     };
     
     const existing = cy.getElementById(node.id);

@@ -1,12 +1,22 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  BIRTH_AMBER,
+  BIRTH_DAWN,
+  BIRTH_FILL_PAPER_MIX,
+  BIRTH_GHOST_PAPER_MIX,
+  BIRTH_MOSS,
+  BIRTH_PAPER,
   BLOB_STEPS,
   CARTOGRAPHY_PALETTE,
   ISLAND_PADDING,
+  SESSION_HUE_SPAN_MS,
   TERRAIN_LEVELS,
   Y_SQUASH,
   arcLabelPlacements,
+  birthColor,
+  birthFill,
+  birthGhostTint,
   blobPath,
   blobRadius,
   centroidOf,
@@ -14,6 +24,7 @@ import {
   islandBaseRadius,
   islandLabelRadius,
   isCartographyEnabled,
+  mixHex,
 } from './cartography';
 
 describe('hashPhase', () => {
@@ -185,6 +196,76 @@ describe('isCartographyEnabled', () => {
     expect(isCartographyEnabled('1')).toBe(true);
     expect(isCartographyEnabled('true')).toBe(true);
     expect(isCartographyEnabled('')).toBe(true);
+  });
+});
+
+describe('mixHex', () => {
+  it('returns the endpoints at t = 0 and t = 1', () => {
+    expect(mixHex('#000000', '#FFFFFF', 0)).toBe('#000000');
+    expect(mixHex('#000000', '#FFFFFF', 1)).toBe('#FFFFFF');
+  });
+
+  it('blends channel-wise at the midpoint', () => {
+    // 127.5 rounds to 128 = 0x80 per channel.
+    expect(mixHex('#000000', '#FFFFFF', 0.5)).toBe('#808080');
+    expect(mixHex('#FF0000', '#0000FF', 0.5)).toBe('#800080');
+  });
+
+  it('clamps t outside [0, 1]', () => {
+    expect(mixHex('#102030', '#405060', -3)).toBe('#102030');
+    expect(mixHex('#102030', '#405060', 7)).toBe('#405060');
+  });
+});
+
+describe('birthColor (time as colour)', () => {
+  const start = Date.parse('2026-07-10T10:00:00Z');
+  const end = start + SESSION_HUE_SPAN_MS;
+
+  it('hits the ramp stops at 0 / 0.5 / 1', () => {
+    expect(birthColor(start, start, end)).toBe(BIRTH_DAWN);
+    expect(birthColor(start + SESSION_HUE_SPAN_MS / 2, start, end)).toBe(BIRTH_MOSS);
+    expect(birthColor(end, start, end)).toBe(BIRTH_AMBER);
+  });
+
+  it('clamps births before the window to dawn and after it to amber', () => {
+    expect(birthColor(start - 60_000, start, end)).toBe(BIRTH_DAWN);
+    expect(birthColor(end + 60 * 60_000, start, end)).toBe(BIRTH_AMBER);
+  });
+
+  it('blends piecewise-linearly between the stops', () => {
+    // Quarter of the window = halfway through the dawn→moss segment.
+    expect(birthColor(start + SESSION_HUE_SPAN_MS / 4, start, end)).toBe(
+      mixHex(BIRTH_DAWN, BIRTH_MOSS, 0.5)
+    );
+    // Three quarters = halfway through the moss→amber segment.
+    expect(birthColor(start + (SESSION_HUE_SPAN_MS * 3) / 4, start, end)).toBe(
+      mixHex(BIRTH_MOSS, BIRTH_AMBER, 0.5)
+    );
+  });
+
+  it('is deterministic for the same inputs', () => {
+    const t = start + 7 * 60_000;
+    expect(birthColor(t, start, end)).toBe(birthColor(t, start, end));
+  });
+
+  it('degenerate windows (zero-length, inverted, NaN) yield dawn', () => {
+    expect(birthColor(start, start, start)).toBe(BIRTH_DAWN);
+    expect(birthColor(start + 1000, start, start)).toBe(BIRTH_DAWN);
+    expect(birthColor(start, end, start)).toBe(BIRTH_DAWN); // inverted span
+    expect(birthColor(Number.NaN, Number.NaN, Number.NaN)).toBe(BIRTH_DAWN);
+  });
+});
+
+describe('birthFill / birthGhostTint', () => {
+  it('mix the birth colour toward paper by the documented amounts', () => {
+    expect(birthFill(BIRTH_DAWN)).toBe(mixHex(BIRTH_DAWN, BIRTH_PAPER, BIRTH_FILL_PAPER_MIX));
+    expect(birthGhostTint(BIRTH_AMBER)).toBe(
+      mixHex(BIRTH_AMBER, BIRTH_PAPER, BIRTH_GHOST_PAPER_MIX)
+    );
+  });
+
+  it('fill sits closer to paper than the ghost tint (labels stay legible)', () => {
+    expect(BIRTH_FILL_PAPER_MIX).toBeGreaterThan(BIRTH_GHOST_PAPER_MIX);
   });
 });
 
