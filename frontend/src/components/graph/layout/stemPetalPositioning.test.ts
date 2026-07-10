@@ -127,20 +127,22 @@ describe('stemPetalPositioning', () => {
 
       applyStemPetalPositioning(cy, flowers, DEFAULT_STEM_PETAL_CONFIG);
 
-      // Check stem is centered (relative to flower at 0,0)
+      // Stem moves to the cluster's centroid (positions are ABSOLUTE model
+      // coordinates — arranging around a fixed origin would stack flowers).
+      // Members: (250,250), (100,100), (150,150), (200,200) → (175, 175).
       const stemPos = cy.getElementById('stem1').position();
-      expect(stemPos.x).toBe(0);
-      expect(stemPos.y).toBe(0);
+      expect(stemPos.x).toBeCloseTo(175, 5);
+      expect(stemPos.y).toBeCloseTo(175, 5);
 
-      // Check petals are arranged in circle (relative to flower center)
+      // Check petals are arranged in circle around the stem
       const petals = ['petal1', 'petal2', 'petal3'].map((id) =>
         cy.getElementById(id).position()
       );
 
-      // All petals should be ~120px from flower center (0,0)
+      // All petals should be ~120px from the cluster centre
       petals.forEach((pos) => {
         const distance = Math.sqrt(
-          Math.pow(pos.x - 0, 2) + Math.pow(pos.y - 0, 2)
+          Math.pow(pos.x - stemPos.x, 2) + Math.pow(pos.y - stemPos.y, 2)
         );
         expect(distance).toBeCloseTo(DEFAULT_STEM_PETAL_CONFIG.petalOrbitRadius, 0);
       });
@@ -264,13 +266,15 @@ describe('stemPetalPositioning', () => {
 
       applyAdaptiveStemPetalPositioning(cy, flowers);
 
-      // Check petals are at adaptive radius (from flower center 0,0)
+      // Stem sits at the cluster centroid; petals orbit at the adaptive
+      // radius around it (absolute coordinates).
       const expectedRadius = calculateOptimalOrbitRadius(5);
-      
+      const stemPos = cy.getElementById('stem1').position();
+
       for (let i = 1; i <= 5; i++) {
         const petalPos = cy.getElementById(`petal${i}`).position();
         const distance = Math.sqrt(
-          Math.pow(petalPos.x - 0, 2) + Math.pow(petalPos.y - 0, 2)
+          Math.pow(petalPos.x - stemPos.x, 2) + Math.pow(petalPos.y - stemPos.y, 2)
         );
         expect(distance).toBeCloseTo(expectedRadius, 0);
       }
@@ -357,14 +361,21 @@ describe('stemPetalPositioning', () => {
 
       applyAdaptiveStemPetalPositioning(cy, flowers);
 
-      // Check flower stems are centered (relative to their flowers)
+      // Each stem moves to ITS OWN cluster's centroid — the two flowers stay
+      // apart instead of stacking on a shared origin.
+      // Flower 1 members: (100,100), (50,50), (150,150) → (100, 100).
       const stem1Pos = cy.getElementById('stem1').position();
-      expect(stem1Pos.x).toBe(0);
-      expect(stem1Pos.y).toBe(0);
+      expect(stem1Pos.x).toBeCloseTo(100, 5);
+      expect(stem1Pos.y).toBeCloseTo(100, 5);
 
+      // Flower 2 members: (500,500), (400,400), (550,550), (600,600) → (512.5, 512.5).
       const stem2Pos = cy.getElementById('stem2').position();
-      expect(stem2Pos.x).toBe(0);
-      expect(stem2Pos.y).toBe(0);
+      expect(stem2Pos.x).toBeCloseTo(512.5, 5);
+      expect(stem2Pos.y).toBeCloseTo(512.5, 5);
+
+      // The clusters must not collapse onto the same point
+      const stemDistance = Math.hypot(stem2Pos.x - stem1Pos.x, stem2Pos.y - stem1Pos.y);
+      expect(stemDistance).toBeGreaterThan(400);
 
       // Check flowers have different radii (adaptive)
       const radius1 = calculateOptimalOrbitRadius(2);

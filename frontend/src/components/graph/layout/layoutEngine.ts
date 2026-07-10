@@ -1,5 +1,6 @@
 import type { FcoseLayoutOptions } from 'cytoscape-fcose';
 import type { Node, Relationship, Flower } from '../../../lib/types';
+import { hashPhase } from '../config/cartography';
 
 /**
  * Layout Engine - Pure functions for graph layout calculations
@@ -19,6 +20,47 @@ export interface LayoutResult {
   lockedNodeIds: Set<string>;
   isolatedNodeIds: Set<string>;
   flowerStructureChanged: boolean;
+}
+
+/** Distance of per-flower seed centres from the origin. */
+export const SEED_CLUSTER_RADIUS = 900;
+
+/** Max deterministic per-node scatter around its cluster seed centre. */
+export const SEED_JITTER_RADIUS = 150;
+
+/**
+ * Deterministic initial position for a NEWLY created Cytoscape node.
+ *
+ * Cytoscape defaults nodes added without a position to (0,0). On a cold
+ * load (an entire session arriving in one sync) that stacks every node on
+ * the same point, and fCoSe with `randomize: false` cannot untangle fully
+ * coincident compounds. Seeding spreads flowers to evenly spaced points on
+ * a wide ring (by flower ordinal) with a per-node hash jitter, so the
+ * physics starts from distinct, clustered positions. Pure and stable:
+ * the same inputs always produce the same seed.
+ */
+export function computeSeedPosition(
+  nodeId: string,
+  flowerId: string | null,
+  flowerOrdinal: number,
+  flowerCount: number
+): { x: number; y: number } {
+  // Per-node jitter: angle + radius both derived from the node id hash.
+  const jitterAngle = hashPhase(nodeId);
+  const jitterRadius = (hashPhase(`${nodeId}#r`) / (Math.PI * 2)) * SEED_JITTER_RADIUS;
+  const jx = jitterRadius * Math.cos(jitterAngle);
+  const jy = jitterRadius * Math.sin(jitterAngle);
+
+  if (!flowerId || flowerCount <= 0) {
+    // Unclustered node: looser scatter around the origin.
+    return { x: jx * 2.5, y: jy * 2.5 };
+  }
+
+  const clusterAngle = (flowerOrdinal / flowerCount) * Math.PI * 2;
+  return {
+    x: SEED_CLUSTER_RADIUS * Math.cos(clusterAngle) + jx,
+    y: SEED_CLUSTER_RADIUS * Math.sin(clusterAngle) + jy,
+  };
 }
 
 /**

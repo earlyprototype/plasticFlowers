@@ -41,12 +41,25 @@ body {
   overflow: hidden;
 }
 
+/* Cartography terrain underlay — sits beneath the (transparent) Cytoscape
+ * viewport; same size, painted via canvas 2d with cy.zoom()/cy.pan() applied
+ * as the context transform. Rendered only when NEXT_PUBLIC_CARTOGRAPHY is on. */
+.graph-canvas__underlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
 .graph-canvas__viewport {
   position: absolute;
   top: 0;
   left: 0;
   right: 0;
   bottom: 0;
+  background: transparent;
 }
 
 .graph-canvas__status {

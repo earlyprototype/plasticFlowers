@@ -1,8 +1,44 @@
 import { describe, it, expect } from 'vitest';
-import { identifyIsolatedNodes, identifyExistingNodes, calculateLayout } from './layoutEngine';
+import {
+  identifyIsolatedNodes,
+  identifyExistingNodes,
+  calculateLayout,
+  computeSeedPosition,
+  SEED_CLUSTER_RADIUS,
+  SEED_JITTER_RADIUS,
+} from './layoutEngine';
 import type { Node, Relationship, Flower } from '../../../lib/types';
 
 describe('layoutEngine', () => {
+  describe('computeSeedPosition', () => {
+    it('is deterministic for the same inputs', () => {
+      expect(computeSeedPosition('n1', 'f1', 0, 4)).toEqual(computeSeedPosition('n1', 'f1', 0, 4));
+    });
+
+    it('clusters members of the same flower near one seed centre', () => {
+      const a = computeSeedPosition('n1', 'f1', 0, 4);
+      const b = computeSeedPosition('n2', 'f1', 0, 4);
+      // Ordinal 0 of 4 → ring angle 0 → centre (R, 0); both within jitter.
+      const center = { x: SEED_CLUSTER_RADIUS, y: 0 };
+      expect(Math.hypot(a.x - center.x, a.y - center.y)).toBeLessThanOrEqual(SEED_JITTER_RADIUS);
+      expect(Math.hypot(b.x - center.x, b.y - center.y)).toBeLessThanOrEqual(SEED_JITTER_RADIUS);
+    });
+
+    it('separates different flowers onto distant ring points', () => {
+      const a = computeSeedPosition('n1', 'f1', 0, 4);
+      const b = computeSeedPosition('n2', 'f2', 1, 4);
+      // Adjacent ring points for 4 flowers are R·√2 apart, far beyond 2×jitter.
+      expect(Math.hypot(a.x - b.x, a.y - b.y)).toBeGreaterThan(
+        SEED_CLUSTER_RADIUS * Math.SQRT2 - 2 * SEED_JITTER_RADIUS
+      );
+    });
+
+    it('scatters unclustered nodes near the origin', () => {
+      const pos = computeSeedPosition('lonely', null, 0, 0);
+      expect(Math.hypot(pos.x, pos.y)).toBeLessThanOrEqual(SEED_JITTER_RADIUS * 2.5);
+    });
+  });
+
   describe('identifyIsolatedNodes', () => {
     it('should return nodes with no connections', () => {
       const nodes: Node[] = [
