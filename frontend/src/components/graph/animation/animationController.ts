@@ -416,6 +416,8 @@ export class AnimationController {
     node.animate(
       { style: { width: targetWidth, height: targetHeight } },
       // easeOutBack — slight overshoot past the natural size, then settle.
+      // Cast required: @types/cytoscape's TransitionTimingFunction union omits
+      // cubic-bezier() strings, which Cytoscape accepts at runtime.
       { duration: SPROUT_NODE_MS, easing: 'cubic-bezier(0.175, 0.885, 0.32, 1.275)' as 'ease-out' }
     );
 
