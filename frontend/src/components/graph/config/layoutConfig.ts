@@ -44,14 +44,9 @@ export const LAYOUT_CONFIG = {
 export const ANIMATION_CONFIG = {
   debounceMs: 500, // Batch SSE updates
   
-  // Camera-first timing
+  // Camera-first timing (growth verb durations live in
+  // animation/animationController.ts next to their implementations)
   cameraFitDuration: 1200, // Camera pan/zoom
-  fadeDuration: 800, // Fade in nodes/edges (same duration)
-  fadeDelay: 400, // Start fade while camera moving
-  
-  // Float effects
-  floatDuration: 3000, // Float cycle duration
-  floatDistance: 15, // Float orbit radius
 } as const;
 
 export const STYLE_CONFIG = [

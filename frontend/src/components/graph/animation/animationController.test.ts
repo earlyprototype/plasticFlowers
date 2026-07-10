@@ -1,277 +1,295 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import cytoscape, { type Core } from 'cytoscape';
-import { AnimationController } from './animationController';
-import type { SyncResult } from '../rendering/graphRenderer';
+import cytoscape, { type Core, type SingularElementReturnValue } from 'cytoscape';
+import {
+  AnimationController,
+  SPROUT_EDGE_MS,
+  SPROUT_NODE_MS,
+  BLOOM_MS,
+  WILT_MS,
+} from './animationController';
+import { PENDING_REMOVAL_SCRATCH, type SyncResult } from '../rendering/graphRenderer';
+import type { PendingRemovalHandle } from '../rendering/graphRenderer';
+
+/**
+ * The controller sequences the growth verbs with timers (headless Cytoscape
+ * never ticks its animation loop, so animate-complete callbacks are not
+ * relied upon). These tests drive the choreography with fake timers and
+ * assert the observable style/element state at each beat.
+ */
+
+// Fixed dimensions: label-derived sizing needs canvas text measurement,
+// which headless Cytoscape doesn't have.
+const TEST_STYLE = [
+  { selector: 'node', style: { width: 40, height: 20, opacity: 1 } },
+  { selector: 'node.ghost', style: { opacity: 0.15 } },
+  { selector: 'edge', style: { opacity: 0.4 } },
+];
+
+const emptySyncResult = (overrides: Partial<SyncResult> = {}): SyncResult => ({
+  addedNodeIds: new Set(),
+  addedEdgeIds: new Set(),
+  removedNodeIds: new Set(),
+  removedEdgeIds: new Set(),
+  updatedNodeIds: new Set(),
+  confirmedNodeIds: new Set(),
+  ...overrides,
+});
+
+// parseFloat: dimension styles come back with units (e.g. '40px')
+const num = (ele: SingularElementReturnValue, prop: string): number =>
+  parseFloat(ele.style(prop));
 
 describe('AnimationController', () => {
   let cy: Core;
   let controller: AnimationController;
 
   beforeEach(() => {
-    // Create headless Cytoscape instance
+    vi.useFakeTimers();
     cy = cytoscape({
       headless: true,
-      styleEnabled: false,
+      styleEnabled: true,
+      style: TEST_STYLE as never,
     });
-
-    controller = new AnimationController();
+    controller = new AnimationController({ prefersReducedMotion: () => false });
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
-  describe('executeAnimationSequence', () => {
-    it('should execute animation sequence without throwing errors', () => {
-      // Add test nodes
+  describe('sprout', () => {
+    it('grows the stem edge first, then scales the node in', async () => {
       cy.add([
-        { group: 'nodes', data: { id: 'node1', label: 'Node 1' } },
-        { group: 'nodes', data: { id: 'node2', label: 'Node 2' } },
+        { group: 'nodes', data: { id: 'existing' }, position: { x: 0, y: 0 } },
+        { group: 'nodes', data: { id: 'fresh' }, position: { x: 100, y: 0 } },
+        { group: 'edges', data: { id: 'e1', source: 'existing', target: 'fresh' } },
       ]);
+      const fresh = cy.getElementById('fresh');
+      const edge = cy.getElementById('e1');
 
-      const syncResult: SyncResult = {
-        addedNodeIds: new Set(['node1']),
-        addedEdgeIds: new Set(),
-        removedNodeIds: new Set(),
-        removedEdgeIds: new Set(),
-        updatedNodeIds: new Set(),
-      };
+      const sequence = controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedNodeIds: new Set(['fresh']), addedEdgeIds: new Set(['e1']) })
+      );
 
-      const isolatedNodeIds = new Set<string>();
+      // Beat 0 (synchronous): the new node is hidden, the stem edge is set up
+      // for the line-grow (arrow hidden, dash sweep armed).
+      expect(num(fresh, 'opacity')).toBe(0);
+      expect(edge.style('target-arrow-shape')).toBe('none');
+      expect(edge.style('line-style')).toBe('dashed');
 
-      // Execute animation - should not throw (don't await completion in headless mode)
-      expect(() => {
-        controller.executeAnimationSequence(cy, syncResult, isolatedNodeIds);
-      }).not.toThrow();
+      // Beat 1: edge growth finished — inline dash styles dropped, node
+      // scale-in has started from a dot.
+      await vi.advanceTimersByTimeAsync(SPROUT_EDGE_MS);
+      expect(edge.style('line-style')).toBe('solid'); // stylesheet again
+      expect(num(fresh, 'opacity')).toBe(1); // revealed
+      expect(num(fresh, 'width')).toBeLessThan(40); // mid-scale
+
+      // Beat 2: scale-in settled — all inline styles removed.
+      await vi.advanceTimersByTimeAsync(SPROUT_NODE_MS);
+      await sequence;
+      expect(num(fresh, 'width')).toBe(40);
+      expect(num(fresh, 'opacity')).toBe(1);
     });
 
-    it('should handle nodes and edges together', () => {
-      cy.add([
-        { group: 'nodes', data: { id: 'node1' } },
-        { group: 'nodes', data: { id: 'node2' } },
-        {
-          group: 'edges',
-          data: { id: 'edge1', source: 'node1', target: 'node2' },
-        },
-      ]);
+    it('scales a node with no edge straight in', async () => {
+      cy.add({ group: 'nodes', data: { id: 'lone' } });
+      const lone = cy.getElementById('lone');
 
-      const syncResult: SyncResult = {
-        addedNodeIds: new Set(['node1']),
-        addedEdgeIds: new Set(['edge1']),
-        removedNodeIds: new Set(),
-        removedEdgeIds: new Set(),
-        updatedNodeIds: new Set(),
-      };
+      const sequence = controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedNodeIds: new Set(['lone']) })
+      );
 
-      // Should not throw
-      expect(() => {
-        controller.executeAnimationSequence(cy, syncResult, new Set());
-      }).not.toThrow();
+      // No stem edge — the scale-in starts immediately: revealed, but as a dot.
+      expect(num(lone, 'opacity')).toBe(1);
+      expect(num(lone, 'width')).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(SPROUT_NODE_MS);
+      await sequence;
+      expect(num(lone, 'opacity')).toBe(1);
+      expect(num(lone, 'width')).toBe(40);
     });
 
-    it('should handle isolated nodes for float effects', () => {
-      cy.add({ group: 'nodes', data: { id: 'isolated1' } });
+    it('drops inline opacity so ghost stylesheet styling applies after sprout (T9)', async () => {
+      cy.add({ group: 'nodes', data: { id: 'g1' }, classes: 'ghost' });
+      const ghost = cy.getElementById('g1');
 
-      const syncResult: SyncResult = {
-        addedNodeIds: new Set(['isolated1']),
-        addedEdgeIds: new Set(),
-        removedNodeIds: new Set(),
-        removedEdgeIds: new Set(),
-        updatedNodeIds: new Set(),
-      };
+      const sequence = controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedNodeIds: new Set(['g1']) })
+      );
 
-      const isolatedNodeIds = new Set(['isolated1']);
+      await vi.advanceTimersByTimeAsync(SPROUT_NODE_MS);
+      await sequence;
+      // An orphaned inline opacity would render the ghost fully opaque.
+      expect(num(ghost, 'opacity')).toBeCloseTo(0.15);
+    });
 
-      // Should not throw
-      expect(() => {
-        controller.executeAnimationSequence(cy, syncResult, isolatedNodeIds);
-      }).not.toThrow();
+    it('does not sprout flower compounds', async () => {
+      cy.add({ group: 'nodes', data: { id: 'flower1' }, classes: 'flower' });
+      const flower = cy.getElementById('flower1');
+
+      const sequence = controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedNodeIds: new Set(['flower1']) })
+      );
+
+      expect(num(flower, 'opacity')).toBe(1); // never hidden
+      await vi.advanceTimersByTimeAsync(SPROUT_EDGE_MS + SPROUT_NODE_MS);
+      await sequence;
+    });
+
+    it('reduced motion: resolves immediately with elements at final state', async () => {
+      controller = new AnimationController({ prefersReducedMotion: () => true });
+      cy.add([
+        { group: 'nodes', data: { id: 'a' } },
+        { group: 'nodes', data: { id: 'b' } },
+        { group: 'edges', data: { id: 'e1', source: 'a', target: 'b' } },
+      ]);
+
+      await controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedNodeIds: new Set(['b']), addedEdgeIds: new Set(['e1']) })
+      );
+
+      expect(num(cy.getElementById('b'), 'opacity')).toBe(1);
+      expect(cy.getElementById('e1').style('line-style')).toBe('solid');
+    });
+
+    it('handles an empty sync result', async () => {
+      await expect(
+        controller.executeAnimationSequence(cy, emptySyncResult())
+      ).resolves.toBeUndefined();
     });
   });
 
-  describe('float effects', () => {
-    it('should apply float to isolated nodes', () => {
-      cy.add({ group: 'nodes', data: { id: 'node1', label: 'Isolated' } });
+  describe('bloom', () => {
+    it('pulses a single expanding ring on a confirmed node, then cleans up', async () => {
+      cy.add({ group: 'nodes', data: { id: 'n1' }, classes: 'solid' });
+      const node = cy.getElementById('n1');
 
-      const syncResult: SyncResult = {
-        addedNodeIds: new Set(['node1']),
-        addedEdgeIds: new Set(),
-        removedNodeIds: new Set(),
-        removedEdgeIds: new Set(),
-        updatedNodeIds: new Set(),
-      };
+      const sequence = controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ confirmedNodeIds: new Set(['n1']) })
+      );
 
-      const isolatedNodeIds = new Set(['node1']);
+      // Pulse armed synchronously.
+      expect(num(node, 'overlay-opacity')).toBeCloseTo(0.4);
 
-      // Should not throw
-      expect(() => {
-        controller.executeAnimationSequence(cy, syncResult, isolatedNodeIds);
-      }).not.toThrow();
+      await vi.advanceTimersByTimeAsync(BLOOM_MS + 50);
+      await sequence;
+      // Inline overlay styles removed — back to the stylesheet default (0).
+      expect(num(node, 'overlay-opacity')).toBe(0);
     });
 
-    it('does not float nodes with two or more connections', async () => {
-      cy.add([
-        { group: 'nodes', data: { id: 'node1' } },
-        { group: 'nodes', data: { id: 'node2' } },
-        { group: 'nodes', data: { id: 'node3' } },
-        { group: 'edges', data: { id: 'e1', source: 'node1', target: 'node2' } },
-        { group: 'edges', data: { id: 'e2', source: 'node1', target: 'node3' } },
-      ]);
+    it('reduced motion: no pulse (class flip restyles instantly)', async () => {
+      controller = new AnimationController({ prefersReducedMotion: () => true });
+      cy.add({ group: 'nodes', data: { id: 'n1' }, classes: 'solid' });
+      const node = cy.getElementById('n1');
 
-      const syncResult: SyncResult = {
-        addedNodeIds: new Set(),
-        addedEdgeIds: new Set(),
-        removedNodeIds: new Set(),
-        removedEdgeIds: new Set(),
-        updatedNodeIds: new Set(),
-      };
+      await controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ confirmedNodeIds: new Set(['n1']) })
+      );
 
-      // node1 has degree 2 -> considered settled, no float
-      await controller.executeAnimationSequence(cy, syncResult, new Set(['node1']));
-      expect(controller.activeFloatCount).toBe(0);
-    });
-
-    it('floats genuinely isolated nodes and stops them on cleanup', async () => {
-      cy.add({ group: 'nodes', data: { id: 'lone1' } });
-
-      const syncResult: SyncResult = {
-        addedNodeIds: new Set(),
-        addedEdgeIds: new Set(),
-        removedNodeIds: new Set(),
-        removedEdgeIds: new Set(),
-        updatedNodeIds: new Set(),
-      };
-
-      await controller.executeAnimationSequence(cy, syncResult, new Set(['lone1']));
-      expect(controller.activeFloatCount).toBe(1);
-
-      controller.stopAllFloatAnimations(cy);
-      expect(controller.activeFloatCount).toBe(0);
-    });
-
-    it('caps concurrent float animations', async () => {
-      const ids: string[] = [];
-      for (let i = 0; i < 40; i += 1) {
-        const id = `iso${i}`;
-        ids.push(id);
-        cy.add({ group: 'nodes', data: { id } });
-      }
-
-      const syncResult: SyncResult = {
-        addedNodeIds: new Set(),
-        addedEdgeIds: new Set(),
-        removedNodeIds: new Set(),
-        removedEdgeIds: new Set(),
-        updatedNodeIds: new Set(),
-      };
-
-      await controller.executeAnimationSequence(cy, syncResult, new Set(ids));
-      expect(controller.activeFloatCount).toBeLessThanOrEqual(30);
-      expect(controller.activeFloatCount).toBeGreaterThan(0);
-
-      controller.stopAllFloatAnimations(cy);
-    });
-
-    it('reanchorFloats drops floats for removed nodes and keeps live ones', async () => {
-      cy.add([
-        { group: 'nodes', data: { id: 'lone1' } },
-        { group: 'nodes', data: { id: 'lone2' } },
-      ]);
-
-      const syncResult: SyncResult = {
-        addedNodeIds: new Set(),
-        addedEdgeIds: new Set(),
-        removedNodeIds: new Set(),
-        removedEdgeIds: new Set(),
-        updatedNodeIds: new Set(),
-      };
-
-      await controller.executeAnimationSequence(cy, syncResult, new Set(['lone1', 'lone2']));
-      expect(controller.activeFloatCount).toBe(2);
-
-      cy.getElementById('lone2').remove();
-      controller.reanchorFloats(cy);
-      expect(controller.activeFloatCount).toBe(1);
-
-      controller.stopAllFloatAnimations(cy);
-    });
-
-    it('should stop all float animations on cleanup', () => {
-      cy.add([
-        { group: 'nodes', data: { id: 'node1' } },
-        { group: 'nodes', data: { id: 'node2' } },
-      ]);
-
-      // Stop all should not throw (even when no animations running)
-      expect(() => controller.stopAllFloatAnimations(cy)).not.toThrow();
+      expect(num(node, 'overlay-opacity')).toBe(0);
     });
   });
 
-  describe('camera fit', () => {
-    it('should execute camera fit as part of sequence', () => {
-      cy.add({ group: 'nodes', data: { id: 'node1' } });
+  describe('wilt', () => {
+    it('defers removal until the wilt completes', async () => {
+      cy.add({ group: 'nodes', data: { id: 'doomed' } });
+      const node = cy.getElementById('doomed');
 
-      const syncResult: SyncResult = {
-        addedNodeIds: new Set(),
-        addedEdgeIds: new Set(),
-        removedNodeIds: new Set(),
-        removedEdgeIds: new Set(),
-        updatedNodeIds: new Set(),
-      };
+      controller.wiltAndRemove(node);
 
-      // Should not throw
-      expect(() => {
-        controller.executeAnimationSequence(cy, syncResult, new Set());
-      }).not.toThrow();
-    });
-  });
+      expect(cy.getElementById('doomed').nonempty()).toBe(true); // still there
+      expect(node.hasClass('wilting')).toBe(true);
+      expect(controller.pendingWiltCount).toBe(1);
 
-  describe('edge cases', () => {
-    it('should handle empty sync result', () => {
-      const syncResult: SyncResult = {
-        addedNodeIds: new Set(),
-        addedEdgeIds: new Set(),
-        removedNodeIds: new Set(),
-        removedEdgeIds: new Set(),
-        updatedNodeIds: new Set(),
-      };
-
-      // Should not throw
-      expect(() => {
-        controller.executeAnimationSequence(cy, syncResult, new Set());
-      }).not.toThrow();
+      await vi.advanceTimersByTimeAsync(WILT_MS);
+      expect(cy.getElementById('doomed').nonempty()).toBe(false); // now removed
+      expect(controller.pendingWiltCount).toBe(0);
     });
 
-    it('should handle nodes added to flowers (no float)', () => {
-      // Create flower and add node as child
+    it('wilts edges as well as nodes', async () => {
       cy.add([
-        {
-          group: 'nodes',
-          data: { id: 'flower1', kind: 'flower' },
-          classes: 'flower',
-        },
-        {
-          group: 'nodes',
-          data: { id: 'node1', parent: 'flower1' },
-        },
+        { group: 'nodes', data: { id: 'a' } },
+        { group: 'nodes', data: { id: 'b' } },
+        { group: 'edges', data: { id: 'e1', source: 'a', target: 'b' } },
       ]);
 
-      const syncResult: SyncResult = {
-        addedNodeIds: new Set(['node1']),
-        addedEdgeIds: new Set(),
-        removedNodeIds: new Set(),
-        removedEdgeIds: new Set(),
-        updatedNodeIds: new Set(),
-      };
+      controller.wiltAndRemove(cy.getElementById('e1'));
+      expect(cy.getElementById('e1').nonempty()).toBe(true);
 
-      // Node1 is marked as isolated but has a parent
-      const isolatedNodeIds = new Set(['node1']);
+      await vi.advanceTimersByTimeAsync(WILT_MS);
+      expect(cy.getElementById('e1').nonempty()).toBe(false);
+    });
 
-      // Should not throw (float not applied to nodes with parents)
-      expect(() => {
-        controller.executeAnimationSequence(cy, syncResult, isolatedNodeIds);
-      }).not.toThrow();
+    it('is idempotent while an element is already wilting', async () => {
+      cy.add({ group: 'nodes', data: { id: 'doomed' } });
+      const node = cy.getElementById('doomed');
+
+      controller.wiltAndRemove(node);
+      controller.wiltAndRemove(node);
+      expect(controller.pendingWiltCount).toBe(1);
+
+      await vi.advanceTimersByTimeAsync(WILT_MS);
+      expect(cy.getElementById('doomed').nonempty()).toBe(false);
+    });
+
+    it('cancelling a wilt keeps the element and restores its styling', async () => {
+      cy.add({ group: 'nodes', data: { id: 'phoenix' }, position: { x: 10, y: 20 } });
+      const node = cy.getElementById('phoenix');
+
+      controller.wiltAndRemove(node);
+      const handle = node.scratch(PENDING_REMOVAL_SCRATCH) as PendingRemovalHandle;
+      expect(typeof handle.cancel).toBe('function');
+
+      handle.cancel!();
+
+      expect(controller.pendingWiltCount).toBe(0);
+      expect(node.hasClass('wilting')).toBe(false);
+      expect(node.scratch(PENDING_REMOVAL_SCRATCH)).toBeUndefined();
+      expect(num(node, 'opacity')).toBe(1); // inline wilt styles dropped
+      expect(node.position()).toEqual({ x: 10, y: 20 }); // sink undone
+
+      // The original removal timer must not fire.
+      await vi.advanceTimersByTimeAsync(WILT_MS * 2);
+      expect(cy.getElementById('phoenix').nonempty()).toBe(true);
+    });
+
+    it('reduced motion: removes immediately', () => {
+      controller = new AnimationController({ prefersReducedMotion: () => true });
+      cy.add({ group: 'nodes', data: { id: 'doomed' } });
+
+      controller.wiltAndRemove(cy.getElementById('doomed'));
+
+      expect(cy.getElementById('doomed').nonempty()).toBe(false);
+      expect(controller.pendingWiltCount).toBe(0);
+    });
+
+    it('stopAll removes wilting elements immediately (unmount path)', async () => {
+      cy.add({ group: 'nodes', data: { id: 'doomed' } });
+      controller.wiltAndRemove(cy.getElementById('doomed'));
+
+      controller.stopAll(cy);
+
+      expect(cy.getElementById('doomed').nonempty()).toBe(false);
+      expect(controller.pendingWiltCount).toBe(0);
+      // Cleared timers must not throw later.
+      await vi.advanceTimersByTimeAsync(WILT_MS * 2);
+    });
+
+    it('is safe when the core is destroyed mid-wilt', async () => {
+      cy.add({ group: 'nodes', data: { id: 'doomed' } });
+      controller.wiltAndRemove(cy.getElementById('doomed'));
+
+      cy.destroy();
+      await vi.advanceTimersByTimeAsync(WILT_MS * 2); // must not throw
+      controller.stopAll(cy); // must not throw against a destroyed core
     });
   });
 });
-

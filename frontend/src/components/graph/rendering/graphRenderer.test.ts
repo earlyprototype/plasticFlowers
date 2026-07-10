@@ -1,6 +1,11 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import cytoscape, { type Core } from 'cytoscape';
-import { syncGraphStructure } from './graphRenderer';
+import {
+  syncGraphStructure,
+  PENDING_REMOVAL_SCRATCH,
+  type PendingRemovalHandle,
+} from './graphRenderer';
+import { AnimationController, WILT_MS } from '../animation/animationController';
 import type { Node, Relationship, Flower } from '../../../lib/types';
 import type { LayoutResult } from '../layout/layoutEngine';
 
@@ -627,6 +632,139 @@ describe('graphRenderer', () => {
 
       expect(result.removedEdgeIds).toContain('rel1');
       expect(cy.getElementById('rel1').nonempty()).toBe(false);
+    });
+  });
+
+  describe('deferred removal (wilt hook)', () => {
+    const makeNode = (id: string, status: Node['status'] = 'solid'): Node => ({
+      id,
+      label: id,
+      confidence: 0.8,
+      mentions: 1,
+      timestamps: [100],
+      inferred_type: 'concept',
+      flower_id: null,
+      created_at: '2025-01-01T00:00:00Z',
+      status,
+    });
+
+    const emptyLayout = (): LayoutResult => ({
+      nodePositions: new Map(),
+      lockedNodeIds: new Set(),
+      isolatedNodeIds: new Set(),
+      flowerStructureChanged: false,
+    });
+
+    it('hands departing nodes to the hook instead of removing them, once', () => {
+      syncGraphStructure(cy, { nodes: [makeNode('n1')], relationships: [], flowers: [] }, emptyLayout());
+
+      const removeElement = vi.fn();
+      const result = syncGraphStructure(
+        cy,
+        { nodes: [], relationships: [], flowers: [] },
+        emptyLayout(),
+        { removeElement }
+      );
+
+      // Recorded as removed, but the element is still in the graph (mid-wilt)
+      expect(result.removedNodeIds).toContain('n1');
+      expect(removeElement).toHaveBeenCalledTimes(1);
+      expect(cy.getElementById('n1').nonempty()).toBe(true);
+      expect(cy.getElementById('n1').scratch(PENDING_REMOVAL_SCRATCH)).toBeTruthy();
+
+      // A second sync while the element departs must not re-report or re-wilt it
+      const again = syncGraphStructure(
+        cy,
+        { nodes: [], relationships: [], flowers: [] },
+        emptyLayout(),
+        { removeElement }
+      );
+      expect(again.removedNodeIds.size).toBe(0);
+      expect(removeElement).toHaveBeenCalledTimes(1);
+    });
+
+    it('cancels a pending removal when the element reappears in the data', () => {
+      syncGraphStructure(cy, { nodes: [makeNode('n1')], relationships: [], flowers: [] }, emptyLayout());
+
+      // Defer removal; simulate the animation side attaching its cancel handle
+      syncGraphStructure(cy, { nodes: [], relationships: [], flowers: [] }, emptyLayout(), {
+        removeElement: () => {},
+      });
+      const ele = cy.getElementById('n1');
+      const cancel = vi.fn(() => ele.removeScratch(PENDING_REMOVAL_SCRATCH));
+      ele.scratch(PENDING_REMOVAL_SCRATCH, { cancel } satisfies PendingRemovalHandle);
+
+      // Node comes back — the wilt must be cancelled and the node updated
+      const result = syncGraphStructure(
+        cy,
+        { nodes: [makeNode('n1')], relationships: [], flowers: [] },
+        emptyLayout(),
+        { removeElement: () => {} }
+      );
+
+      expect(cancel).toHaveBeenCalledTimes(1);
+      expect(result.updatedNodeIds).toContain('n1');
+      expect(cy.getElementById('n1').nonempty()).toBe(true);
+    });
+
+    it('integration: element is removed after the wilt completes, or revived by re-add', async () => {
+      vi.useFakeTimers();
+      try {
+        const controller = new AnimationController({ prefersReducedMotion: () => false });
+        const options = {
+          removeElement: (ele: Parameters<AnimationController['wiltAndRemove']>[0]) =>
+            controller.wiltAndRemove(ele),
+        };
+
+        syncGraphStructure(
+          cy,
+          { nodes: [makeNode('n1'), makeNode('n2')], relationships: [], flowers: [] },
+          emptyLayout()
+        );
+
+        // Both depart…
+        syncGraphStructure(cy, { nodes: [], relationships: [], flowers: [] }, emptyLayout(), options);
+        expect(cy.getElementById('n1').nonempty()).toBe(true);
+        expect(cy.getElementById('n2').nonempty()).toBe(true);
+
+        // …but n2 is re-added mid-wilt
+        syncGraphStructure(cy, { nodes: [makeNode('n2')], relationships: [], flowers: [] }, emptyLayout(), options);
+
+        await vi.advanceTimersByTimeAsync(WILT_MS);
+        expect(cy.getElementById('n1').nonempty()).toBe(false); // wilted away
+        expect(cy.getElementById('n2').nonempty()).toBe(true); // revived
+        expect(cy.getElementById('n2').hasClass('wilting')).toBe(false);
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it('reports ghost → solid confirmations exactly once', () => {
+      // Arrives as ghost — nothing to confirm
+      let result = syncGraphStructure(
+        cy,
+        { nodes: [makeNode('n1', 'ghost')], relationships: [], flowers: [] },
+        emptyLayout()
+      );
+      expect(result.confirmedNodeIds.size).toBe(0);
+      expect(cy.getElementById('n1').hasClass('ghost')).toBe(true);
+
+      // Confirms — reported on the flip
+      result = syncGraphStructure(
+        cy,
+        { nodes: [makeNode('n1', 'solid')], relationships: [], flowers: [] },
+        emptyLayout()
+      );
+      expect(result.confirmedNodeIds).toContain('n1');
+      expect(cy.getElementById('n1').hasClass('solid')).toBe(true);
+
+      // Stays solid — never reported again
+      result = syncGraphStructure(
+        cy,
+        { nodes: [makeNode('n1', 'solid')], relationships: [], flowers: [] },
+        emptyLayout()
+      );
+      expect(result.confirmedNodeIds.size).toBe(0);
     });
   });
 

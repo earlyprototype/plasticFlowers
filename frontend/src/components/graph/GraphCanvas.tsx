@@ -307,7 +307,9 @@ export function GraphCanvas({
       cy.off('mouseout', 'node.flower', handleHoverOff);
       cy.off('mouseover', 'edge', handleHoverOn);
       cy.off('mouseout', 'edge', handleHoverOff);
-      controller.stopAllFloatAnimations(cy);
+      // Unmount: cancel verb timers and remove any mid-wilt elements
+      // immediately (no deferred removal against a dying core).
+      controller.stopAll(cy);
       terrainRef.current?.destroy();
       terrainRef.current = null;
       cy.destroy();
@@ -343,8 +345,13 @@ export function GraphCanvas({
         previousFlowersRef.current
       );
 
-      // 2. Sync graph structure (applies changes to Cytoscape)
-      const syncResult = syncGraphStructure(cy, { nodes, relationships, flowers }, layoutResult);
+      // 2. Sync graph structure (applies changes to Cytoscape). Departing
+      // nodes/edges are handed to the WILT verb, which removes them from the
+      // graph once the wilt completes (~900ms) — or immediately under
+      // prefers-reduced-motion.
+      const syncResult = syncGraphStructure(cy, { nodes, relationships, flowers }, layoutResult, {
+        removeElement: (ele) => controller.wiltAndRemove(ele),
+      });
 
       // 3. Determine if layout should run
       const shouldRunLayout = 
@@ -386,10 +393,6 @@ export function GraphCanvas({
 
         // Unlock all nodes
         cy.nodes().unlock();
-
-        // Re-anchor float animations to the freshly laid-out positions so
-        // floats don't fight the layout with stale captured anchors.
-        controller.reanchorFloats(cy);
       }
 
       // 3.5. Apply stem-petal positioning within flowers
@@ -404,8 +407,8 @@ export function GraphCanvas({
       // during the upcoming animations are tracked by its own listeners.
       terrainRef.current?.setFlowers(flowers);
 
-      // 4. Execute animation sequence (camera-first!)
-      await controller.executeAnimationSequence(cy, syncResult, layoutResult.isolatedNodeIds);
+      // 4. Execute the growth sequence (camera-first, then bloom + sprout)
+      await controller.executeAnimationSequence(cy, syncResult);
       if (cancelled || cy.destroyed()) return;
 
       // 4.5. Repaint workaround: at low zoom Cytoscape's layered texture

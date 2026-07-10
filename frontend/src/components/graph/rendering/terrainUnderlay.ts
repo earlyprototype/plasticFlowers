@@ -171,7 +171,7 @@ export function createTerrainUnderlay(cy: Core, canvas: HTMLCanvasElement): Terr
 
   // 'viewport' covers pan+zoom, 'resize' covers container size changes,
   // 'layoutstop' is layout settle, 'position' keeps islands glued to nodes
-  // during drags and float animations. All coalesce into one draw per frame.
+  // during drags and growth animations. All coalesce into one draw per frame.
   cy.on('viewport resize layoutstop', scheduleRedraw);
   cy.on('position', 'node', scheduleRedraw);
 

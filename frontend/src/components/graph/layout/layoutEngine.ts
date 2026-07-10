@@ -64,7 +64,7 @@ export function computeSeedPosition(
 }
 
 /**
- * Identify nodes that should have float effect
+ * Identify isolated nodes (not yet clustered/settled)
  * Criteria: not in flower AND has ≤1 connection
  */
 export function identifyIsolatedNodes(
@@ -148,7 +148,7 @@ export function calculateLayout(
   // Identify existing nodes (should be locked during layout)
   const existingNodeIds = identifyExistingNodes(currentPositions, data.nodes);
   
-  // Identify isolated nodes (will get float effect)
+  // Identify isolated nodes (not yet clustered/settled)
   const isolatedNodeIds = identifyIsolatedNodes(data.nodes, data.relationships);
   
   // Detect if flower structure changed (major transformative event!)
