@@ -12,7 +12,8 @@ import {
 
 export interface ExportPanelProps {
   sessionId: string;
-  onSessionEnded?: () => void;
+  /** Called after the end-session API call succeeds, with the server's ended_at. */
+  onSessionEnded?: (endedAt?: string) => void;
 }
 
 type ExportFormat = 'json' | 'transcript' | 'vtt' | 'markdown';
@@ -72,9 +73,9 @@ export function ExportPanel({ sessionId, onSessionEnded }: ExportPanelProps) {
   const handleEndSession = useCallback(async () => {
     setState({ loading: 'end', error: null });
     try {
-      await endSession(sessionId);
+      const result = await endSession(sessionId);
       setState({ loading: null, error: null });
-      onSessionEnded?.();
+      onSessionEnded?.(result.ended_at);
     } catch (err) {
       setState({ loading: null, error: err instanceof Error ? err.message : 'Failed to end session' });
     }

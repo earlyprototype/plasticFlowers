@@ -32,6 +32,13 @@ export interface TerrainUnderlay {
   setFlowers(flowers: Flower[]): void;
   /** Request a redraw on the next animation frame (coalesced). */
   scheduleRedraw(): void;
+  /**
+   * Draw the terrain scene (paper background + islands) into an arbitrary
+   * context at `scale` device pixels per CSS pixel. Used by the portrait PNG
+   * export so the composite is re-rendered crisply at export resolution
+   * rather than upscaled from the live canvas.
+   */
+  renderTo(ctx: CanvasRenderingContext2D, cssWidth: number, cssHeight: number, scale: number): void;
   /** Remove all Cytoscape listeners and cancel any pending frame. */
   destroy(): void;
 }
@@ -128,6 +135,36 @@ export function createTerrainUnderlay(cy: Core, canvas: HTMLCanvasElement): Terr
   let flowers: Flower[] = [];
   let rafId: number | null = null;
 
+  /**
+   * Render the full scene into `target` at `scale` device px per CSS px.
+   * Shared by the live draw (scale = devicePixelRatio) and the portrait PNG
+   * export (scale = export factor).
+   */
+  const renderTo = (
+    target: CanvasRenderingContext2D,
+    cssWidth: number,
+    cssHeight: number,
+    scale: number
+  ) => {
+    // Paper background in screen space.
+    target.setTransform(1, 0, 0, 1, 0, 0);
+    target.fillStyle = CARTOGRAPHY_PALETTE.bg;
+    target.fillRect(0, 0, Math.round(cssWidth * scale), Math.round(cssHeight * scale));
+
+    // Model → screen: apply Cytoscape's own zoom/pan (plus the scale) so
+    // terrain geometry expressed in model coordinates lands exactly under
+    // the nodes.
+    const zoom = cy.zoom();
+    const pan = cy.pan();
+    target.setTransform(scale * zoom, 0, 0, scale * zoom, scale * pan.x, scale * pan.y);
+
+    const islands = computeIslands(cy, flowers);
+    // Terrain first, then all labels, so a neighbouring island never covers
+    // another island's name.
+    for (const island of islands) drawIslandTerrain(target, island, zoom);
+    for (const island of islands) drawIslandLabel(target, island);
+  };
+
   const draw = () => {
     rafId = null;
     if (!ctx || cy.destroyed()) return;
@@ -145,22 +182,7 @@ export function createTerrainUnderlay(cy: Core, canvas: HTMLCanvasElement): Terr
       canvas.style.height = `${height}px`;
     }
 
-    // Paper background in screen space.
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = CARTOGRAPHY_PALETTE.bg;
-    ctx.fillRect(0, 0, deviceWidth, deviceHeight);
-
-    // Model → screen: apply Cytoscape's own zoom/pan (plus DPR) so terrain
-    // geometry expressed in model coordinates lands exactly under the nodes.
-    const zoom = cy.zoom();
-    const pan = cy.pan();
-    ctx.setTransform(dpr * zoom, 0, 0, dpr * zoom, dpr * pan.x, dpr * pan.y);
-
-    const islands = computeIslands(cy, flowers);
-    // Terrain first, then all labels, so a neighbouring island never covers
-    // another island's name.
-    for (const island of islands) drawIslandTerrain(ctx, island, zoom);
-    for (const island of islands) drawIslandLabel(ctx, island);
+    renderTo(ctx, width, height, dpr);
   };
 
   const scheduleRedraw = () => {
@@ -171,7 +193,7 @@ export function createTerrainUnderlay(cy: Core, canvas: HTMLCanvasElement): Terr
 
   // 'viewport' covers pan+zoom, 'resize' covers container size changes,
   // 'layoutstop' is layout settle, 'position' keeps islands glued to nodes
-  // during drags and float animations. All coalesce into one draw per frame.
+  // during drags and growth animations. All coalesce into one draw per frame.
   cy.on('viewport resize layoutstop', scheduleRedraw);
   cy.on('position', 'node', scheduleRedraw);
 
@@ -181,6 +203,7 @@ export function createTerrainUnderlay(cy: Core, canvas: HTMLCanvasElement): Terr
       scheduleRedraw();
     },
     scheduleRedraw,
+    renderTo,
     destroy() {
       cy.removeListener('viewport resize layoutstop', scheduleRedraw);
       cy.removeListener('position', 'node', scheduleRedraw);

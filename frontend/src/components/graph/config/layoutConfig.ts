@@ -41,17 +41,10 @@ export const LAYOUT_CONFIG = {
   initialEnergyOnIncremental: 0.2, // Very gentle updates (was 0.3)
 } as const;
 
+// Growth verb + camera durations live in animation/animationController.ts
+// next to their implementations.
 export const ANIMATION_CONFIG = {
   debounceMs: 500, // Batch SSE updates
-  
-  // Camera-first timing
-  cameraFitDuration: 1200, // Camera pan/zoom
-  fadeDuration: 800, // Fade in nodes/edges (same duration)
-  fadeDelay: 400, // Start fade while camera moving
-  
-  // Float effects
-  floatDuration: 3000, // Float cycle duration
-  floatDistance: 15, // Float orbit radius
 } as const;
 
 export const STYLE_CONFIG = [
@@ -228,6 +221,14 @@ export const STYLE_CONFIG = [
       opacity: 0.7, // More subtle (de-emphasise cluster connections)
     },
   },
+  {
+    // Portrait mode (Move 5): ghosts and mid-wilt leftovers are hidden while
+    // the plate is presented; GraphCanvas toggles this class on entry/exit.
+    selector: '.portrait-hidden',
+    style: {
+      display: 'none',
+    },
+  },
 ] as const;
 
 /**
@@ -266,34 +267,42 @@ const CARTOGRAPHY_STYLE_OVERRIDES = [
     style: {
       // Legacy 0.15 disappears entirely against the chart paper; keep
       // ghosts clearly fainter than solid nodes but still readable.
+      // Time as colour (Move 4): the dashed border carries the birth hue at
+      // reduced strength (paper-mixed by the renderer) — ghosts stay ghosts,
+      // but even rumours know when they were first whispered.
       opacity: 0.45,
       'font-style': 'italic',
       'font-size': '10px',
       'text-opacity': 0.75,
       color: '#6B7263',
-      'border-color': '#9AA28C',
+      'border-color': 'data(birthGhost)',
       'background-color': '#F4F3E9',
     },
   },
   {
     selector: 'node.solid',
     style: {
+      // Time as colour (Move 4): fill is the birth hue mixed well toward
+      // paper (data(birthFill)) so the ink label stays legible; the border
+      // carries the pure birth colour — linework does the talking.
       'font-weight': 600,
-      'border-color': '#42493E',
+      'border-color': 'data(birthColor)',
       'border-width': 1.5, // was 3 — map linework, not marker pen
-      'background-color': '#FBFAF2',
+      'background-color': 'data(birthFill)',
     },
   },
   {
     selector: 'node.stem',
     style: {
+      // Stems keep the serif "capital city" typography; the birth colour is
+      // the border accent only — label ink stays dark and readable.
       'font-family': CARTOGRAPHY_SERIF_STACK,
       'font-size': '14px',
       'font-weight': 600,
       color: '#38301F',
-      'border-color': '#A98F5A', // surveyed-sepia accent
+      'border-color': 'data(birthColor)',
       'border-width': 2, // was 5 — keep prominence without the heavy frame
-      'background-color': '#F3EDDB',
+      'background-color': 'data(birthFill)',
     },
   },
   {

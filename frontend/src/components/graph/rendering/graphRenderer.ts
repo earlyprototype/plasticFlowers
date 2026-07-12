@@ -1,10 +1,16 @@
-import type { Core } from 'cytoscape';
+import type { Core, EdgeSingular, NodeSingular } from 'cytoscape';
 import type { Node, Relationship, Flower } from '../../../lib/types';
 import { computeSeedPosition, type LayoutResult } from '../layout/layoutEngine';
+import {
+  SESSION_HUE_SPAN_MS,
+  birthColor,
+  birthFill,
+  birthGhostTint,
+} from '../config/cartography';
 
 /**
  * Graph Renderer - Syncs data to Cytoscape
- * 
+ *
  * Applies graph structure changes to Cytoscape without layout calculations or animations.
  * Handles nodes, edges, and compound flower structures.
  */
@@ -15,6 +21,94 @@ export interface SyncResult {
   removedNodeIds: Set<string>;
   removedEdgeIds: Set<string>;
   updatedNodeIds: Set<string>;
+  /**
+   * Nodes whose status flipped ghost → solid in THIS sync. Populated exactly
+   * once per confirmation (on the class flip), so the bloom pulse consuming
+   * this set can never repeat.
+   */
+  confirmedNodeIds: Set<string>;
+}
+
+/**
+ * Scratch namespace marking an element as pending removal (mid-wilt).
+ *
+ * Protocol: when a `removeElement` hook is supplied, the renderer stamps this
+ * scratch before handing the element over, records the id in the removal set
+ * once, and skips the element on subsequent syncs while it departs. The
+ * animation side stores a `cancel` on the handle; if the element reappears in
+ * the data mid-wilt the renderer cancels the removal and updates it in place.
+ */
+export const PENDING_REMOVAL_SCRATCH = '_pfWilt';
+
+export interface PendingRemovalHandle {
+  cancel?: () => void;
+}
+
+export interface SyncOptions {
+  /**
+   * Deferred removal hook (the wilt animation). Called INSTEAD of
+   * `ele.remove()` for departing nodes/edges; the implementation must
+   * eventually remove the element (or the element stays mid-wilt until the
+   * next cancel). Flower compounds always remove immediately — removing a
+   * compound removes its children, which must not lag behind the data.
+   */
+  removeElement?: (ele: NodeSingular | EdgeSingular) => void;
+  /**
+   * Birth-colour anchor (ms since epoch): the session start. Prop beats
+   * inference — when supplied (ideally from the session record itself) the
+   * anchor is independent of whichever nodes happen to be in `data.nodes`
+   * (UI filters must never repaint history). Non-finite/absent values fall
+   * back to the earliest birth among the synced nodes. Whatever resolves
+   * FIRST for a session is pinned on the core and reused for every later
+   * sync of that session — see resolveSessionAnchor.
+   */
+  sessionStartMs?: number;
+  /**
+   * Session identity for the anchor pin. When it changes between syncs the
+   * pinned anchor resets (a new session is a new chronology).
+   */
+  sessionId?: string;
+}
+
+/** Cy-scratch key holding the pinned per-session birth-colour anchor. */
+export const SESSION_ANCHOR_SCRATCH = '_pfSessionAnchor';
+
+interface SessionAnchorPin {
+  sessionId: string | undefined;
+  anchorMs: number;
+}
+
+/**
+ * Resolve the birth-colour anchor with PIN-FIRST-WINS semantics.
+ *
+ * The anchor a session is first synced with (the sessionStartMs prop when
+ * supplied at that first sync, else the earliest synced birth) is stored on
+ * the core and reused for ALL subsequent syncs of the same sessionId. It
+ * never moves afterwards — not when the fallback inference drifts (the
+ * earliest node gets pruned or filtered out), and not when a prop arrives
+ * later (e.g. session.created_at swapped in on re-selection). Colours are
+ * stamped create-only, so a moving anchor would bake mixed chronologies into
+ * one map; pin-first-wins keeps the map self-consistent, which beats
+ * retroactive precision. The pin resets when sessionId changes.
+ *
+ * A non-finite resolution (empty sync with no prop — nothing parsed) is NOT
+ * pinned: it stamps no colours anyway, and the first REAL anchor should win.
+ */
+function resolveSessionAnchor(cy: Core, nodes: Node[], options: SyncOptions): number {
+  const pinned = cy.scratch(SESSION_ANCHOR_SCRATCH) as SessionAnchorPin | undefined;
+  if (pinned && pinned.sessionId === options.sessionId) return pinned.anchorMs;
+
+  const anchorMs =
+    options.sessionStartMs !== undefined && Number.isFinite(options.sessionStartMs)
+      ? options.sessionStartMs
+      : earliestBirthMs(nodes);
+  if (Number.isFinite(anchorMs)) {
+    cy.scratch(SESSION_ANCHOR_SCRATCH, {
+      sessionId: options.sessionId,
+      anchorMs,
+    } satisfies SessionAnchorPin);
+  }
+  return anchorMs;
 }
 
 /**
@@ -23,7 +117,8 @@ export interface SyncResult {
 export function syncGraphStructure(
   cy: Core,
   data: { nodes: Node[]; relationships: Relationship[]; flowers: Flower[] },
-  layoutResult: LayoutResult
+  layoutResult: LayoutResult,
+  options: SyncOptions = {}
 ): SyncResult {
   const result: SyncResult = {
     addedNodeIds: new Set(),
@@ -31,22 +126,69 @@ export function syncGraphStructure(
     removedNodeIds: new Set(),
     removedEdgeIds: new Set(),
     updatedNodeIds: new Set(),
+    confirmedNodeIds: new Set(),
   };
-  
+
   // Build lookup sets
   const stemLookup = new Set(data.flowers.map((f) => f.stem_node_id).filter(Boolean));
   const flowerOrdinals = new Map(data.flowers.map((f, index) => [f.id, index]));
+
+  // Time-as-colour (Move 4): the anchor is the session start, supplied by the
+  // caller (options.sessionStartMs, from the session record) so it does not
+  // depend on which nodes are currently synced — UI filters must never shift
+  // the window. Fallback: earliest node birth in this sync. created_at is the
+  // truthful birth source — a real ISO datetime stamped by the backend —
+  // whereas timestamps[] are seconds relative to the session/page start.
+  // Colours are stamped ONCE, when an element is created (stable by
+  // construction); updates never restamp, so history is never repainted —
+  // and the anchor itself is PINNED per session (see resolveSessionAnchor),
+  // so later syncs of the same session can never bake mixed chronologies.
+  const sessionStartMs = resolveSessionAnchor(cy, data.nodes, options);
 
   // 1. Sync flowers (compound nodes)
   syncFlowers(cy, data.flowers, data.nodes, result);
 
   // 2. Sync regular nodes
-  syncNodes(cy, data.nodes, stemLookup, flowerOrdinals, layoutResult, result);
-  
+  syncNodes(cy, data.nodes, stemLookup, flowerOrdinals, sessionStartMs, layoutResult, result, options);
+
   // 3. Sync edges
-  syncEdges(cy, data.relationships, result);
-  
+  syncEdges(cy, data.relationships, result, options);
+
   return result;
+}
+
+/**
+ * Remove an element, deferring to the removal hook (wilt) when provided.
+ * Returns true when the departure was recorded now; false when the element
+ * is already mid-wilt from an earlier sync.
+ */
+function removeOrDefer(
+  ele: NodeSingular | EdgeSingular,
+  options: SyncOptions
+): boolean {
+  if (ele.scratch(PENDING_REMOVAL_SCRATCH)) return false; // already departing
+  if (options.removeElement) {
+    ele.scratch(PENDING_REMOVAL_SCRATCH, {} satisfies PendingRemovalHandle);
+    options.removeElement(ele);
+  } else {
+    ele.remove();
+  }
+  return true;
+}
+
+/**
+ * An element scheduled for removal reappeared in the data — cancel the
+ * pending removal (the wilt's cancel handle restores styling) so the update
+ * path can proceed on a live element.
+ */
+function cancelPendingRemoval(ele: NodeSingular | EdgeSingular): void {
+  const handle = ele.scratch(PENDING_REMOVAL_SCRATCH) as PendingRemovalHandle | undefined;
+  if (!handle) return;
+  if (handle.cancel) {
+    handle.cancel();
+  } else {
+    ele.removeScratch(PENDING_REMOVAL_SCRATCH);
+  }
 }
 
 /**
@@ -107,6 +249,19 @@ function syncFlowers(
 }
 
 /**
+ * Earliest finite birth time (ms since epoch) among the nodes, or NaN when
+ * none parses — birthColor treats a NaN window as degenerate (dawn).
+ */
+function earliestBirthMs(nodes: Node[]): number {
+  let earliest = Number.POSITIVE_INFINITY;
+  for (const node of nodes) {
+    const ms = Date.parse(node.created_at);
+    if (Number.isFinite(ms) && ms < earliest) earliest = ms;
+  }
+  return Number.isFinite(earliest) ? earliest : Number.NaN;
+}
+
+/**
  * Sync regular nodes
  */
 function syncNodes(
@@ -114,18 +269,21 @@ function syncNodes(
   nodes: Node[],
   stemLookup: Set<string>,
   flowerOrdinals: Map<string, number>,
+  sessionStartMs: number,
   layoutResult: LayoutResult,
-  result: SyncResult
+  result: SyncResult,
+  options: SyncOptions
 ): void {
   const desiredNodeIds = new Set(nodes.map((n) => n.id));
-  
-  // Remove nodes that no longer exist
+
+  // Remove nodes that no longer exist (deferred through the wilt hook)
   cy.nodes()
     .filter((ele) => !ele.hasClass('flower'))
     .forEach((ele) => {
       if (!desiredNodeIds.has(ele.id())) {
-        ele.remove();
-        result.removedNodeIds.add(ele.id());
+        if (removeOrDefer(ele, options)) {
+          result.removedNodeIds.add(ele.id());
+        }
       }
     });
   
@@ -137,6 +295,7 @@ function syncNodes(
     }
     
     const parentId = node.flower_id ?? null;
+
     const elementData: Record<string, unknown> = {
       id: node.id,
       label: node.label,
@@ -147,13 +306,23 @@ function syncNodes(
       timestamps: node.timestamps || [], // Also useful for temporal styling
       inferred_type: node.inferred_type || 'concept',
     };
-    
+
     const existing = cy.getElementById(node.id);
     if (existing && existing.nonempty()) {
+      // Element re-appeared while departing — cancel the wilt and revive it
+      cancelPendingRemoval(existing);
+
+      // BLOOM trigger: detect the ghost → solid flip BEFORE classes are
+      // replaced. Only the transition sync reports the id, so the pulse
+      // fires exactly once per confirmation.
+      if (existing.hasClass('ghost') && node.status === 'solid') {
+        result.confirmedNodeIds.add(node.id);
+      }
+
       // Update existing node
       existing.data(elementData);
       existing.classes(classes.join(' '));
-      
+
       // Move to new parent if needed.
       // Normalize both sides to null: `.parent().first().id()` is undefined for
       // parentless nodes, and `undefined !== null` would move() (remove+re-add)
@@ -165,6 +334,19 @@ function syncNodes(
       
       result.updatedNodeIds.add(node.id);
     } else {
+      // Time as colour: the node's birth hue over the fixed reference window
+      // (see the SPAN CONTRACT in config/cartography.ts). Stamped ONLY at
+      // creation — the hue is a function of (created_at, session anchor),
+      // both immutable, so restamping on update would be pure waste and any
+      // anchor drift must never repaint existing nodes. Always stamped as
+      // data; only the cartography stylesheet/verbs consume it, so with the
+      // flag off the legacy palette is untouched.
+      const nodeBirthColor = birthColor(
+        Date.parse(node.created_at),
+        sessionStartMs,
+        sessionStartMs + SESSION_HUE_SPAN_MS
+      );
+
       // Create new node with a deterministic seed position: Cytoscape
       // defaults to (0,0), so a cold load (whole session in one sync) would
       // otherwise stack every node on the same point — a start fCoSe with
@@ -172,7 +354,12 @@ function syncNodes(
       // flower on a wide ring; the layout run then refines from there.
       cy.add({
         group: 'nodes',
-        data: elementData,
+        data: {
+          ...elementData,
+          birthColor: nodeBirthColor, // pure ramp colour (borders, bloom ring)
+          birthFill: birthFill(nodeBirthColor), // paper-mixed fill (label legibility)
+          birthGhost: birthGhostTint(nodeBirthColor), // reduced-strength ghost border tint
+        },
         classes: classes.join(' '),
         position: computeSeedPosition(
           node.id,
@@ -192,15 +379,17 @@ function syncNodes(
 function syncEdges(
   cy: Core,
   relationships: Relationship[],
-  result: SyncResult
+  result: SyncResult,
+  options: SyncOptions
 ): void {
   const desiredEdgeIds = new Set(relationships.map((r) => r.id));
-  
-  // Remove edges that no longer exist
+
+  // Remove edges that no longer exist (deferred through the wilt hook)
   cy.edges().forEach((edge) => {
     if (!desiredEdgeIds.has(edge.id())) {
-      edge.remove();
-      result.removedEdgeIds.add(edge.id());
+      if (removeOrDefer(edge, options)) {
+        result.removedEdgeIds.add(edge.id());
+      }
     }
   });
   
@@ -237,6 +426,9 @@ function syncEdges(
     
     const existing = cy.getElementById(relationship.id);
     if (existing && existing.nonempty()) {
+      // Edge re-appeared while departing — cancel the wilt and revive it
+      cancelPendingRemoval(existing);
+
       // Update existing edge in place. Edge updates are intentionally not
       // recorded in the SyncResult: updatedNodeIds is a node/flower set and
       // no consumer needs updated-edge ids.

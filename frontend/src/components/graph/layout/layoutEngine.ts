@@ -18,7 +18,6 @@ export type LayoutOptions = FcoseLayoutOptions;
 export interface LayoutResult {
   nodePositions: Map<string, { x: number; y: number }>;
   lockedNodeIds: Set<string>;
-  isolatedNodeIds: Set<string>;
   flowerStructureChanged: boolean;
 }
 
@@ -61,30 +60,6 @@ export function computeSeedPosition(
     x: SEED_CLUSTER_RADIUS * Math.cos(clusterAngle) + jx,
     y: SEED_CLUSTER_RADIUS * Math.sin(clusterAngle) + jy,
   };
-}
-
-/**
- * Identify nodes that should have float effect
- * Criteria: not in flower AND has ≤1 connection
- */
-export function identifyIsolatedNodes(
-  nodes: Node[],
-  relationships: Relationship[]
-): Set<string> {
-  const connectionCounts = new Map<string, number>();
-  
-  // Count connections for each node
-  relationships.forEach((r) => {
-    connectionCounts.set(r.source_id, (connectionCounts.get(r.source_id) || 0) + 1);
-    connectionCounts.set(r.target_id, (connectionCounts.get(r.target_id) || 0) + 1);
-  });
-  
-  // Find standalone nodes with low connections
-  return new Set(
-    nodes
-      .filter((n) => !n.flower_id && (connectionCounts.get(n.id) || 0) <= 1)
-      .map((n) => n.id)
-  );
 }
 
 /**
@@ -137,7 +112,7 @@ export function hasFlowerStructureChanged(
 }
 
 /**
- * Calculate layout result - which nodes are new, isolated, and should be locked
+ * Calculate layout result - which nodes are new and should be locked
  */
 export function calculateLayout(
   currentPositions: Map<string, { x: number; y: number }>,
@@ -147,13 +122,10 @@ export function calculateLayout(
 ): LayoutResult {
   // Identify existing nodes (should be locked during layout)
   const existingNodeIds = identifyExistingNodes(currentPositions, data.nodes);
-  
-  // Identify isolated nodes (will get float effect)
-  const isolatedNodeIds = identifyIsolatedNodes(data.nodes, data.relationships);
-  
+
   // Detect if flower structure changed (major transformative event!)
   const flowerStructureChanged = hasFlowerStructureChanged(previousFlowers, data.flowers);
-  
+
   // Return locked positions for existing nodes
   const lockedPositions = new Map<string, { x: number; y: number }>();
   existingNodeIds.forEach((nodeId) => {
@@ -162,11 +134,10 @@ export function calculateLayout(
       lockedPositions.set(nodeId, pos);
     }
   });
-  
+
   return {
     nodePositions: lockedPositions,
     lockedNodeIds: existingNodeIds,
-    isolatedNodeIds,
     flowerStructureChanged,
   };
 }
