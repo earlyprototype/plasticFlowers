@@ -26,7 +26,9 @@ import type { PendingRemovalHandle } from '../rendering/graphRenderer';
 const TEST_STYLE = [
   { selector: 'node', style: { width: 40, height: 20, opacity: 1 } },
   { selector: 'node.ghost', style: { opacity: 0.15 } },
-  { selector: 'edge', style: { opacity: 0.4 } },
+  // Non-default arrow so "reverted to the stylesheet arrow" is assertable
+  // (the Cytoscape default is 'none', which growEdge also sets inline).
+  { selector: 'edge', style: { opacity: 0.4, 'target-arrow-shape': 'triangle' } },
 ];
 
 const emptySyncResult = (overrides: Partial<SyncResult> = {}): SyncResult => ({
@@ -385,6 +387,69 @@ describe('AnimationController', () => {
       await vi.advanceTimersByTimeAsync(WILT_MS);
       expect(cy.getElementById('e1').nonempty()).toBe(false);
     });
+
+    it('an edge wilted mid-sweep and re-added revives with NO sprout inline styles', async () => {
+      cy.add([
+        { group: 'nodes', data: { id: 'a' }, position: { x: 0, y: 0 } },
+        { group: 'nodes', data: { id: 'b' }, position: { x: 100, y: 0 } },
+        { group: 'edges', data: { id: 'e1', source: 'a', target: 'b' } },
+      ]);
+      const edge = cy.getElementById('e1');
+
+      void controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedEdgeIds: new Set(['e1']) })
+      );
+
+      // Sweep armed: dashed, offset at full length, arrow hidden inline.
+      expect(edge.style('line-style')).toBe('dashed');
+      expect(num(edge, 'line-dash-offset')).toBeGreaterThan(0);
+      expect(edge.style('target-arrow-shape')).toBe('none');
+
+      // Pruned mid-sweep (the sprout settle beat bails on the wilt)…
+      controller.wiltAndRemove(edge);
+      await vi.advanceTimersByTimeAsync(SPROUT_EDGE_MS);
+      expect(edge.style('line-style')).toBe('dashed'); // settle bailed
+
+      // …then re-added: the renderer calls the wilt's cancel handle. The
+      // revive must drop EVERY verb inline style — not just the wilt's own —
+      // or the edge stays frozen as a partial dashed line with no arrowhead.
+      const handle = edge.scratch(PENDING_REMOVAL_SCRATCH) as PendingRemovalHandle;
+      handle.cancel!();
+
+      expect(edge.hasClass('wilting')).toBe(false);
+      expect(edge.style('line-style')).toBe('solid'); // stylesheet again
+      expect(num(edge, 'line-dash-offset')).toBe(0);
+      expect(edge.style('target-arrow-shape')).toBe('triangle'); // stylesheet arrow
+      expect(num(edge, 'opacity')).toBeCloseTo(0.4);
+
+      // The original removal timer must not fire.
+      await vi.advanceTimersByTimeAsync(WILT_MS * 2);
+      expect(cy.getElementById('e1').nonempty()).toBe(true);
+    });
+
+    it('a node wilted mid-scale-in and re-added revives with NO sprout inline styles', async () => {
+      addStemFixture();
+      const fresh = cy.getElementById('fresh');
+
+      void controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedNodeIds: new Set(['fresh']), addedEdgeIds: new Set(['e1']) })
+      );
+
+      // Mid-scale-in: inline width holds the node at a dot.
+      await vi.advanceTimersByTimeAsync(SPROUT_EDGE_MS);
+      expect(num(fresh, 'width')).toBe(1);
+
+      controller.wiltAndRemove(fresh);
+      const handle = fresh.scratch(PENDING_REMOVAL_SCRATCH) as PendingRemovalHandle;
+      handle.cancel!();
+
+      // Full stylesheet styling back — no frozen dot, no hidden label.
+      expect(num(fresh, 'width')).toBe(40);
+      expect(num(fresh, 'opacity')).toBe(1);
+      expect(fresh.hasClass('wilting')).toBe(false);
+    });
   });
 
   describe('camera', () => {
@@ -405,6 +470,20 @@ describe('AnimationController', () => {
       const ids = arg.fit.eles.map((ele) => ele.id());
       expect(ids).toContain('alive');
       expect(ids).not.toContain('dying');
+    });
+
+    it('an empty fit still supersedes in-flight viewport tweens (stop precedes the early return)', () => {
+      // Empty core: nothing to frame, but a queued/in-flight camera tween
+      // (e.g. a growth fit) must still be stopped — portrait entry on an
+      // empty graph must not be panned away by a stale fit landing later.
+      const stop = vi.spyOn(cy, 'stop');
+      const animate = vi.spyOn(cy, 'animate');
+
+      controller.startCameraFit(cy);
+
+      expect(stop).toHaveBeenCalledTimes(1);
+      expect(stop).toHaveBeenCalledWith(true);
+      expect(animate).not.toHaveBeenCalled(); // still no fit on nothing
     });
 
     it('honours eles/padding options and reduced motion (instant fit)', () => {
@@ -458,6 +537,67 @@ describe('AnimationController', () => {
       controller.wiltAndRemove(node);
       expect(cy.getElementById('n1').nonempty()).toBe(false); // removed instantly
       expect(controller.pendingWiltCount).toBe(0);
+    });
+
+    it('setPortrait(true, cy) finalises an in-flight sprout instantly (calm plate from entry)', async () => {
+      cy.add([
+        { group: 'nodes', data: { id: 'existing' }, position: { x: 0, y: 0 } },
+        { group: 'nodes', data: { id: 'fresh' }, position: { x: 100, y: 0 } },
+        { group: 'edges', data: { id: 'e1', source: 'existing', target: 'fresh' } },
+      ]);
+      const fresh = cy.getElementById('fresh');
+      const edge = cy.getElementById('e1');
+
+      void controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ addedNodeIds: new Set(['fresh']), addedEdgeIds: new Set(['e1']) })
+      );
+
+      // Mid-flight: the node is a dot behind a growing dashed edge.
+      await vi.advanceTimersByTimeAsync(SPROUT_EDGE_MS);
+      expect(num(fresh, 'width')).toBe(1);
+      expect(controller.pendingChoreographyCount).toBeGreaterThan(0);
+
+      controller.setPortrait(true, cy);
+
+      // Element at its final size with NO inline verb styles left.
+      expect(num(fresh, 'width')).toBe(40);
+      expect(num(fresh, 'opacity')).toBe(1);
+      expect(edge.style('line-style')).toBe('solid');
+      expect(edge.style('target-arrow-shape')).toBe('triangle');
+      expect(controller.pendingChoreographyCount).toBe(0);
+
+      // No timer fires later: the settle beats were cleared, so nothing may
+      // re-touch styles after the plate is presented.
+      await vi.advanceTimersByTimeAsync(SPROUT_EDGE_MS + SPROUT_NODE_MS + WILT_MS);
+      expect(num(fresh, 'width')).toBe(40);
+      expect(edge.style('line-style')).toBe('solid');
+    });
+
+    it('setPortrait(true, cy) completes in-flight blooms and wilts instantly', async () => {
+      cy.add([
+        { group: 'nodes', data: { id: 'blooming' }, classes: 'solid' },
+        { group: 'nodes', data: { id: 'doomed' } },
+      ]);
+      const blooming = cy.getElementById('blooming');
+
+      void controller.executeAnimationSequence(
+        cy,
+        emptySyncResult({ confirmedNodeIds: new Set(['blooming']) })
+      );
+      controller.wiltAndRemove(cy.getElementById('doomed'));
+      expect(num(blooming, 'overlay-opacity')).toBeCloseTo(0.4); // pulse armed
+      expect(controller.pendingWiltCount).toBe(1);
+
+      controller.setPortrait(true, cy);
+
+      expect(num(blooming, 'overlay-opacity')).toBe(0); // pulse cleaned up
+      expect(cy.getElementById('doomed').nonempty()).toBe(false); // removed NOW
+      expect(controller.pendingWiltCount).toBe(0);
+      expect(controller.pendingChoreographyCount).toBe(0);
+
+      await vi.advanceTimersByTimeAsync(BLOOM_MS + WILT_MS); // nothing left to fire
+      expect(num(blooming, 'overlay-opacity')).toBe(0);
     });
 
     it('verbs animate again after setPortrait(false)', () => {

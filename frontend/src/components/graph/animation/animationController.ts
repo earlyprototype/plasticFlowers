@@ -28,7 +28,9 @@ import { CARTOGRAPHY_PALETTE, isCartographyEnabled } from '../config/cartography
  * stay calm — the controller runs NO verbs (elements snap to their final
  * states via the same instant path as reduced motion) and the growth-sequence
  * camera fit is suppressed entirely. Portrait entry drives its own camera fit
- * through `startCameraFit` explicitly.
+ * through `startCameraFit` explicitly, and `setPortrait(true, cy)` first
+ * completes any in-flight choreography instantly so that fit frames
+ * full-size, fully-styled elements.
  *
  * Sequencing is timer-based (setTimeout), not animate-complete based: in
  * headless Cytoscape (tests) the animation loop never ticks, so completion
@@ -43,7 +45,36 @@ import { CARTOGRAPHY_PALETTE, isCartographyEnabled } from '../config/cartography
  * T9 lesson (keep!): every inline style set for an animation is removed once
  * the verb finishes, so stylesheet rules (e.g. `node.ghost { opacity }`)
  * apply again. An orphaned inline `opacity: 1` renders ghosts fully opaque.
+ * Every cleanup site removes the FULL per-kind verb style list
+ * (NODE_VERB_INLINE_STYLES / EDGE_VERB_INLINE_STYLES) rather than the subset
+ * its own verb set — a verb interrupted by another (e.g. a wilt taking over a
+ * mid-sweep edge grow that later revives) must never leave a style frozen.
  */
+
+/**
+ * EVERY inline style any verb sets on a plain or compound NODE:
+ * - sprout: opacity, width, height, text-opacity
+ * - bloom:  overlay-shape, overlay-color, overlay-opacity, overlay-padding
+ * - wilt:   opacity, text-opacity, width, height, background-color, border-color
+ *
+ * All cleanup sites (verb settle beats, the wilt cancel/revive handle,
+ * portrait-entry finalisation, stopAll) remove THIS list. Adding a style to
+ * any verb means adding it here — never to an individual cleanup site — so
+ * no future verb style can leak past an interrupted verb.
+ */
+export const NODE_VERB_INLINE_STYLES =
+  'opacity text-opacity width height background-color border-color ' +
+  'overlay-shape overlay-color overlay-opacity overlay-padding';
+
+/**
+ * EVERY inline style any verb sets on an EDGE:
+ * - sprout (line-grow): opacity, line-style, line-dash-pattern,
+ *   line-dash-offset, target-arrow-shape
+ * - wilt: opacity
+ * See NODE_VERB_INLINE_STYLES for the cleanup contract.
+ */
+export const EDGE_VERB_INLINE_STYLES =
+  'opacity line-style line-dash-pattern line-dash-offset target-arrow-shape';
 
 /** Stem-edge line-grow duration (ms). */
 export const SPROUT_EDGE_MS = 350;
@@ -126,9 +157,38 @@ export class AnimationController {
    * Toggle portrait mode (Move 5). While active, every verb takes its
    * instant final-state path (the reduced-motion behaviour) and
    * executeAnimationSequence never moves the camera — the plate stays calm.
+   *
+   * Pass `cy` when activating so IN-FLIGHT choreography is completed
+   * instantly too: a portrait entered mid-sprout/-bloom/-wilt must be calm
+   * from its first frame (and the entry fit must frame full-size nodes), not
+   * after the last timer settles.
    */
-  setPortrait(active: boolean): void {
+  setPortrait(active: boolean, cy?: Core | null): void {
     this.portraitActive = active;
+    if (active && cy) {
+      this.finishAllVerbs(cy);
+    }
+  }
+
+  /**
+   * Complete every running verb instantly: clear all choreography timers
+   * (their settle-beat cleanup happens here instead — the pending sprout
+   * awaits simply never resume), remove mid-wilt elements NOW, jump the
+   * remaining element tweens to their end state and drop every verb inline
+   * style (the full per-kind lists), so stylesheet styling applies again.
+   * Used on portrait entry and on unmount (stopAll).
+   */
+  private finishAllVerbs(cy: Core): void {
+    this.wiltTimers.forEach((timer) => clearTimeout(timer));
+    this.wiltTimers.clear();
+    this.choreographyTimers.forEach((timer) => clearTimeout(timer));
+    this.choreographyTimers.clear();
+    if (cy.destroyed()) return;
+    cy.elements('.wilting').remove();
+    const eles = cy.elements();
+    eles.stop(true, true); // jump in-flight verb tweens to their end state
+    eles.nodes().removeStyle(NODE_VERB_INLINE_STYLES);
+    eles.edges().removeStyle(EDGE_VERB_INLINE_STYLES);
   }
 
   /** Verbs snap to final states instantly (reduced motion or portrait). */
@@ -159,6 +219,13 @@ export class AnimationController {
    */
   startCameraFit(cy: Core, options: CameraFitOptions = {}): void {
     const eles = (options.eles ?? cy.elements()).not('.wilting');
+
+    // Viewport animations QUEUE on the core: without clearing, rapid syncs
+    // (live growth) build a backlog of stale fits and the camera lags many
+    // beats behind the data. Supersede any in-flight/queued fit instead —
+    // BEFORE the empty-eles return, so even a fit with nothing to frame
+    // (e.g. portrait entry on an empty graph) stops a stale camera move.
+    cy.stop(true);
     if (eles.length === 0) return;
     const padding = options.padding ?? 50;
 
@@ -167,10 +234,6 @@ export class AnimationController {
       return;
     }
 
-    // Viewport animations QUEUE on the core: without clearing, rapid syncs
-    // (live growth) build a backlog of stale fits and the camera lags many
-    // beats behind the data. Supersede any in-flight/queued fit instead.
-    cy.stop(true);
     cy.animate(
       { fit: { eles, padding } },
       {
@@ -382,9 +445,9 @@ export class AnimationController {
     await at(startAtMs + SPROUT_EDGE_MS);
     if (cy.destroyed() || this.sproutBailed(edge)) return;
     edge.stop(true, true);
-    // Drop every inline style so stylesheet rules (e.g. inter-flower dashes,
-    // base arrows) win again.
-    edge.removeStyle('line-style line-dash-pattern line-dash-offset target-arrow-shape');
+    // Drop every inline verb style so stylesheet rules (e.g. inter-flower
+    // dashes, base arrows) win again.
+    edge.removeStyle(EDGE_VERB_INLINE_STYLES);
   }
 
   /**
@@ -424,7 +487,7 @@ export class AnimationController {
     await at(startAtMs + SPROUT_NODE_MS);
     if (cy.destroyed() || this.sproutBailed(node)) return;
     node.stop(true, true);
-    node.removeStyle('width height text-opacity');
+    node.removeStyle(NODE_VERB_INLINE_STYLES);
   }
 
   // --- BLOOM ----------------------------------------------------------------
@@ -457,10 +520,12 @@ export class AnimationController {
       );
 
       // Cleanup slightly after the tween so we never yank a style mid-frame.
+      // Bails on a wilting node like every settle beat: the wilt owns the
+      // element's styles now (its cancel/removal cleans up the full list).
       const timer = setTimeout(() => {
         this.choreographyTimers.delete(timer);
-        if (cy.destroyed() || node.removed()) return;
-        node.removeStyle('overlay-shape overlay-color overlay-opacity overlay-padding');
+        if (cy.destroyed() || node.removed() || node.hasClass('wilting')) return;
+        node.removeStyle(NODE_VERB_INLINE_STYLES);
       }, BLOOM_MS + 50);
       this.choreographyTimers.add(timer);
     });
@@ -515,7 +580,11 @@ export class AnimationController {
       ele.stop(true, false);
       ele.removeScratch(PENDING_REMOVAL_SCRATCH);
       ele.removeClass('wilting');
-      ele.removeStyle('opacity text-opacity width height background-color border-color');
+      // Full per-kind verb list, not just the wilt's own styles: a wilt that
+      // took over a mid-sprout element (whose settle beats bailed) inherits
+      // that verb's inline styles too — e.g. an edge pruned mid-line-grow
+      // would otherwise revive frozen as a partial dashed line with no arrow.
+      ele.removeStyle(ele.isNode() ? NODE_VERB_INLINE_STYLES : EDGE_VERB_INLINE_STYLES);
       // Revive at the element's CURRENT position: layout may have moved
       // everything since the wilt began — snapping back to a stale
       // wilt-start position would teleport the node.
@@ -558,16 +627,10 @@ export class AnimationController {
    * Stop all pending verb timers (wilt removals, sprout beats, bloom
    * cleanups) — after this call NO controller timer is left alive. Wilting
    * elements are removed IMMEDIATELY (unmount must not leave zombie elements
-   * waiting on timers); if the core is already destroyed there is nothing
-   * left to remove.
+   * waiting on timers) and every remaining verb inline style is dropped; if
+   * the core is already destroyed there is nothing left to touch.
    */
   stopAll(cy: Core): void {
-    this.wiltTimers.forEach((timer) => clearTimeout(timer));
-    this.wiltTimers.clear();
-    this.choreographyTimers.forEach((timer) => clearTimeout(timer));
-    this.choreographyTimers.clear();
-    if (!cy.destroyed()) {
-      cy.elements('.wilting').remove();
-    }
+    this.finishAllVerbs(cy);
   }
 }

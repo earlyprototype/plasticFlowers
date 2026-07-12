@@ -127,6 +127,10 @@ export function GraphCanvas({
   const portraitCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const portraitOverlayRef = useRef<PortraitOverlay | null>(null);
   const portraitActiveRef = useRef(false);
+  // Whether the portrait framing has been applied to a NON-EMPTY collection.
+  // Entry on an empty graph has nothing to frame; the first sync that brings
+  // content then runs the portrait-framed fit once (see the sync effect).
+  const portraitFitDoneRef = useRef(false);
   // Export failures surface as a toast (same pattern as the chunk-error
   // toast); cleared on the next attempt and on portrait exit.
   const [portraitError, setPortraitError] = useState<string | null>(null);
@@ -411,7 +415,11 @@ export function GraphCanvas({
   useEffect(() => {
     portraitActiveRef.current = portraitActive;
     const controller = getAnimController();
-    controller.setPortrait(portraitActive);
+    // Portrait entry FIRST finalises any in-flight choreography (verbs jump
+    // to their end states, verb inline styles dropped, mid-wilt elements
+    // removed) — the entry fit below must frame a calm plate of full-size
+    // nodes, not a mid-sprout snapshot.
+    controller.setPortrait(portraitActive, cyRef.current);
     if (!portraitActive) setPortraitError(null);
     const cy = cyRef.current;
     const canvas = portraitCanvasRef.current;
@@ -424,15 +432,20 @@ export function GraphCanvas({
     const previousViewport = { zoom: cy.zoom(), pan: { ...cy.pan() } };
     cy.elements('.ghost, .wilting').addClass('portrait-hidden');
     // Entry fit via the controller: it supersedes any queued growth fit and
-    // honours prefers-reduced-motion (instant fit instead of a tween).
+    // honours prefers-reduced-motion (instant fit instead of a tween). On an
+    // empty graph the fit no-ops; the sync effect retries it once content
+    // arrives (portraitFitDoneRef).
+    const kept = cy.elements().not('.portrait-hidden');
+    portraitFitDoneRef.current = kept.length > 0;
     controller.startCameraFit(cy, {
-      eles: cy.elements().not('.portrait-hidden'),
+      eles: kept,
       padding: PORTRAIT_FIT_PADDING,
       duration: 700,
     });
 
     return () => {
       portraitActiveRef.current = false;
+      portraitFitDoneRef.current = false;
       controller.setPortrait(false);
       overlay.destroy();
       portraitOverlayRef.current = null;
@@ -551,6 +564,7 @@ export function GraphCanvas({
       const syncResult = syncGraphStructure(cy, { nodes, relationships, flowers }, layoutResult, {
         removeElement: (ele) => controller.wiltAndRemove(ele),
         sessionStartMs,
+        sessionId,
       });
 
       // 3. Determine if layout should run
@@ -613,6 +627,21 @@ export function GraphCanvas({
       // new ghosts — keep them hidden while the plate is presented.
       if (portraitActiveRef.current) {
         cy.elements('.ghost, .wilting').addClass('portrait-hidden');
+
+        // Portrait fit retry: if the entry fit found nothing to frame (the
+        // plate was entered on an empty graph), run the portrait-framed fit
+        // once, on the first sync that brings content.
+        if (!portraitFitDoneRef.current) {
+          const kept = cy.elements().not('.portrait-hidden');
+          if (kept.length > 0) {
+            portraitFitDoneRef.current = true;
+            controller.startCameraFit(cy, {
+              eles: kept,
+              padding: PORTRAIT_FIT_PADDING,
+              duration: 700,
+            });
+          }
+        }
       }
 
       // 4. Execute the growth sequence (camera-first, then bloom + sprout)
@@ -645,7 +674,7 @@ export function GraphCanvas({
         syncDebounceTimerRef.current = null;
       }
     };
-  }, [nodes, relationships, flowers, sessionStartMs, getAnimController]);
+  }, [nodes, relationships, flowers, sessionStartMs, sessionId, getAnimController]);
 
   return (
     <div className={`graph-canvas ${className ?? ''}`}>

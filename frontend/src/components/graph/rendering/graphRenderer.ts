@@ -58,9 +58,57 @@ export interface SyncOptions {
    * inference — when supplied (ideally from the session record itself) the
    * anchor is independent of whichever nodes happen to be in `data.nodes`
    * (UI filters must never repaint history). Non-finite/absent values fall
-   * back to the earliest birth among the synced nodes.
+   * back to the earliest birth among the synced nodes. Whatever resolves
+   * FIRST for a session is pinned on the core and reused for every later
+   * sync of that session — see resolveSessionAnchor.
    */
   sessionStartMs?: number;
+  /**
+   * Session identity for the anchor pin. When it changes between syncs the
+   * pinned anchor resets (a new session is a new chronology).
+   */
+  sessionId?: string;
+}
+
+/** Cy-scratch key holding the pinned per-session birth-colour anchor. */
+export const SESSION_ANCHOR_SCRATCH = '_pfSessionAnchor';
+
+interface SessionAnchorPin {
+  sessionId: string | undefined;
+  anchorMs: number;
+}
+
+/**
+ * Resolve the birth-colour anchor with PIN-FIRST-WINS semantics.
+ *
+ * The anchor a session is first synced with (the sessionStartMs prop when
+ * supplied at that first sync, else the earliest synced birth) is stored on
+ * the core and reused for ALL subsequent syncs of the same sessionId. It
+ * never moves afterwards — not when the fallback inference drifts (the
+ * earliest node gets pruned or filtered out), and not when a prop arrives
+ * later (e.g. session.created_at swapped in on re-selection). Colours are
+ * stamped create-only, so a moving anchor would bake mixed chronologies into
+ * one map; pin-first-wins keeps the map self-consistent, which beats
+ * retroactive precision. The pin resets when sessionId changes.
+ *
+ * A non-finite resolution (empty sync with no prop — nothing parsed) is NOT
+ * pinned: it stamps no colours anyway, and the first REAL anchor should win.
+ */
+function resolveSessionAnchor(cy: Core, nodes: Node[], options: SyncOptions): number {
+  const pinned = cy.scratch(SESSION_ANCHOR_SCRATCH) as SessionAnchorPin | undefined;
+  if (pinned && pinned.sessionId === options.sessionId) return pinned.anchorMs;
+
+  const anchorMs =
+    options.sessionStartMs !== undefined && Number.isFinite(options.sessionStartMs)
+      ? options.sessionStartMs
+      : earliestBirthMs(nodes);
+  if (Number.isFinite(anchorMs)) {
+    cy.scratch(SESSION_ANCHOR_SCRATCH, {
+      sessionId: options.sessionId,
+      anchorMs,
+    } satisfies SessionAnchorPin);
+  }
+  return anchorMs;
 }
 
 /**
@@ -92,11 +140,10 @@ export function syncGraphStructure(
   // truthful birth source — a real ISO datetime stamped by the backend —
   // whereas timestamps[] are seconds relative to the session/page start.
   // Colours are stamped ONCE, when an element is created (stable by
-  // construction); updates never restamp, so history is never repainted.
-  const sessionStartMs =
-    options.sessionStartMs !== undefined && Number.isFinite(options.sessionStartMs)
-      ? options.sessionStartMs
-      : earliestBirthMs(data.nodes);
+  // construction); updates never restamp, so history is never repainted —
+  // and the anchor itself is PINNED per session (see resolveSessionAnchor),
+  // so later syncs of the same session can never bake mixed chronologies.
+  const sessionStartMs = resolveSessionAnchor(cy, data.nodes, options);
 
   // 1. Sync flowers (compound nodes)
   syncFlowers(cy, data.flowers, data.nodes, result);

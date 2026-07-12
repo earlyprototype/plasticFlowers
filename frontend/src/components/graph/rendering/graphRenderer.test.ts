@@ -858,6 +858,120 @@ describe('graphRenderer', () => {
       expect(cy.getElementById('n1').data('birthColor')).toBe(BIRTH_DAWN);
     });
 
+    it('pins the first inferred anchor: a LATER prop arrival does not move it', () => {
+      // First sync: no prop (e.g. pasted-id fallback) — the anchor pins to
+      // the earliest birth (startMs).
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('n1', 0)], relationships: [], flowers: [] },
+        emptyLayout()
+      );
+      expect(cy.getElementById('n1').data('birthColor')).toBe(BIRTH_DAWN);
+
+      // Later the session record arrives with a DIFFERENT start (e.g. the
+      // same session re-selected, session.created_at swapped in). Pin-first
+      // wins: the new node is stamped against the PINNED anchor, keeping the
+      // map's chronology self-consistent.
+      syncGraphStructure(
+        cy,
+        {
+          nodes: [bornAt('n1', 0), bornAt('n2', SESSION_HUE_SPAN_MS / 2)],
+          relationships: [],
+          flowers: [],
+        },
+        emptyLayout(),
+        { sessionStartMs: startMs - SESSION_HUE_SPAN_MS / 2 }
+      );
+      // From the pinned anchor n2 is mid-window (moss); the drifted prop
+      // would have pushed it to the end of the window (amber).
+      expect(cy.getElementById('n2').data('birthColor')).toBe(BIRTH_MOSS);
+    });
+
+    it('pins the anchor against fallback drift when the earliest node is pruned/filtered', () => {
+      // Anchor pins to the dawn node's birth.
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('n-first', 0)], relationships: [], flowers: [] },
+        emptyLayout()
+      );
+
+      // The dawn node disappears from the view (pruned or filtered out);
+      // without the pin, inference would drift to n-mid's own birth and
+      // wrongly stamp it as the session's dawn.
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('n-mid', SESSION_HUE_SPAN_MS / 2)], relationships: [], flowers: [] },
+        emptyLayout()
+      );
+      expect(cy.getElementById('n-mid').data('birthColor')).toBe(BIRTH_MOSS);
+    });
+
+    it('pins the prop anchor when it is available at the first sync', () => {
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('n-mid', SESSION_HUE_SPAN_MS / 2)], relationships: [], flowers: [] },
+        emptyLayout(),
+        { sessionStartMs: startMs, sessionId: 's1' }
+      );
+      expect(cy.getElementById('n-mid').data('birthColor')).toBe(BIRTH_MOSS);
+
+      // Prop gone on a later sync (e.g. transient state): the pin holds —
+      // inference would have made n-late's window start at n-mid's birth.
+      syncGraphStructure(
+        cy,
+        {
+          nodes: [
+            bornAt('n-mid', SESSION_HUE_SPAN_MS / 2),
+            bornAt('n-late', SESSION_HUE_SPAN_MS),
+          ],
+          relationships: [],
+          flowers: [],
+        },
+        emptyLayout(),
+        { sessionId: 's1' }
+      );
+      expect(cy.getElementById('n-late').data('birthColor')).toBe(BIRTH_AMBER);
+    });
+
+    it('resets the pin when sessionId changes', () => {
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('a1', 0)], relationships: [], flowers: [] },
+        emptyLayout(),
+        { sessionStartMs: startMs, sessionId: 'session-a' }
+      );
+
+      // A different session starts half a window later — its first node must
+      // be dawn relative to ITS OWN anchor, not session-a's pinned one.
+      const startB = startMs + SESSION_HUE_SPAN_MS / 2;
+      syncGraphStructure(
+        cy,
+        { nodes: [bornAt('b1', SESSION_HUE_SPAN_MS / 2)], relationships: [], flowers: [] },
+        emptyLayout(),
+        { sessionStartMs: startB, sessionId: 'session-b' }
+      );
+      expect(cy.getElementById('b1').data('birthColor')).toBe(BIRTH_DAWN);
+    });
+
+    it('does not pin a non-finite anchor from an empty first sync', () => {
+      // Nothing to stamp, nothing parseable — pinning NaN here would freeze
+      // every later node at dawn.
+      syncGraphStructure(cy, { nodes: [], relationships: [], flowers: [] }, emptyLayout());
+
+      syncGraphStructure(
+        cy,
+        {
+          nodes: [bornAt('n1', 0), bornAt('n2', SESSION_HUE_SPAN_MS / 2)],
+          relationships: [],
+          flowers: [],
+        },
+        emptyLayout()
+      );
+      // The first REAL anchor (n1's birth) won and n2 reads mid-window.
+      expect(cy.getElementById('n1').data('birthColor')).toBe(BIRTH_DAWN);
+      expect(cy.getElementById('n2').data('birthColor')).toBe(BIRTH_MOSS);
+    });
+
     it('stamps birth colours only at creation — updates never repaint', () => {
       syncGraphStructure(
         cy,
