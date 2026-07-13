@@ -31,9 +31,10 @@ from .graph_db import (
     delete_chunks_for_session,
 )
 from .llm import (
-    LLMError, 
-    generate_structured_json, 
+    LLMError,
+    generate_structured_json,
     is_fake_llm_enabled,
+    validate_configured_models,
     get_call_count,
     reset_call_count,
     get_next_fallback_model,
@@ -76,6 +77,7 @@ __all__ = [
     "generate_structured_json",
     "LLMError",
     "is_fake_llm_enabled",
+    "validate_configured_models",
     "get_call_count",
     "reset_call_count",
     "get_next_fallback_model",

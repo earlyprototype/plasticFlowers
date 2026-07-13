@@ -43,11 +43,19 @@ _CALL_COUNT_LOCK = threading.Lock()
 # These models all support 1M context, different RPM limits on free tier
 _MODEL_ROTATION_INDEX = 0
 _MODEL_ROTATION_LOCK = threading.Lock()
+# Rotation targets for quota (429) fallback. STABLE model IDs only — an
+# experimental id here (the retired gemini-2.0-flash-exp) turned every
+# rate-limit retry into a hard 404. Quality-first, degrading to the higher
+# free-tier-limit lite model as a last resort, never to a dead model.
 _FALLBACK_MODELS = [
-    "gemini-2.5-flash",      # 15 RPM free tier
-    "gemini-2.0-flash-exp",  # Experimental, likely higher limits
-    "gemini-2.0-flash",      # Stable, similar to 2.5-flash
+    "gemini-2.5-flash",       # primary: best quality
+    "gemini-2.0-flash",       # stable, similar capability
+    "gemini-flash-latest",    # maintenance-free alias, last resort
 ]
+# NOTE: gemini-2.5-flash-lite is deliberately excluded — it appears in
+# models.list() but 404s at call time ("no longer available to new users"),
+# so list-membership validation can't catch it. Prefer the "-latest" alias,
+# which Google repoints to a live model and never retires out from under us.
 
 def get_call_count() -> int:
     """Return total API calls made this session."""
@@ -104,6 +112,33 @@ def _get_client(settings) -> genai.Client:
 def get_gemini_client() -> genai.Client:
     """Public accessor for the shared Gemini client."""
     return _get_client(get_settings())
+
+
+def validate_configured_models() -> list[str]:
+    """Check every configured/rotation model against the live model catalogue.
+
+    Returns the list of configured model IDs the API does not expose. Retired
+    IDs (text-embedding-004, gemini-2.0-flash-exp) 404 only at call time deep in
+    a worker — this surfaces them loudly at boot instead. Network failure here
+    returns [] (don't brick startup on a transient blip); the caller logs.
+    """
+    settings = get_settings()
+    configured = {
+        settings.embedding_model,
+        settings.gemini_model_builder,
+        settings.gemini_model_gardener,
+        *_FALLBACK_MODELS,
+    }
+    client = _get_client(settings)
+    available: set[str] = set()
+    for model in client.models.list():
+        name = (model.name or "").removeprefix("models/")
+        available.add(name)
+        available.add(model.name or "")
+    return sorted(
+        m for m in configured
+        if m and m.removeprefix("models/") not in available and m not in available
+    )
 
 
 async def generate_structured_json(

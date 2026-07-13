@@ -103,13 +103,19 @@ class Settings(BaseSettings):
         description="Transient error retries for Gemini requests (exponential backoff).",
     )
     embedding_dimensions: int = Field(
-        768,
+        3072,
         ge=1,
-        description="Dimensions produced by the Google `text-embedding-004` model.",
+        description="Embedding vector length. gemini-embedding-001 emits 3072 "
+        "natively (unit-normalised); 768/1536 are supported truncations "
+        "(re-normalised in embeddings.py). Must match the Neo4j vector index — "
+        "change it and the index is dropped/recreated on next boot.",
     )
     embedding_model: str = Field(
-        "models/text-embedding-004",
-        description="Google embedding model used for vector similarity.",
+        "gemini-embedding-001",
+        description="Google embedding model used for vector similarity. "
+        "text-embedding-004 was retired (404); gemini-embedding-001 is the "
+        "current model. NOTE: similarity_threshold (0.92) was tuned for the "
+        "old model and should be re-validated against this one.",
     )
     embedding_cache_size: int = Field(
         512,

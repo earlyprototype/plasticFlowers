@@ -47,6 +47,7 @@ from .services import (
     redis_health_check,
     run_healthcheck,
     researcher_service,
+    validate_configured_models,
 )
 
 logger = logging.getLogger(__name__)
@@ -63,6 +64,24 @@ async def lifespan(app: FastAPI):
         app.state.neo4j_driver = None
         yield
         return
+
+    # Validate configured Gemini models against the live catalogue before we
+    # serve traffic — retired ids otherwise 404 deep in a Builder/Gardener
+    # worker (as text-embedding-004 and gemini-2.0-flash-exp did). Loud at boot,
+    # non-fatal: a transient list() blip must not brick startup.
+    try:
+        missing = validate_configured_models()
+        if missing:
+            logger.error(
+                "llm.model_validation FAILED — configured models not found in the "
+                "Gemini catalogue: %s. Extraction/clustering/embeddings will 404 "
+                "until these are corrected in config/.env.",
+                ", ".join(missing),
+            )
+        else:
+            logger.info("llm.model_validation ok — all configured models available")
+    except Exception as exc:
+        logger.warning("llm.model_validation skipped (catalogue unavailable): %s", exc)
 
     # Initialize Neo4j
     driver = await get_driver()
