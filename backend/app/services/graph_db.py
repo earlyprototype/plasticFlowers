@@ -1371,15 +1371,19 @@ async def create_reference(session_id: str, reference: ReferenceNode) -> Referen
     CREATE (n)-[:HAS_REFERENCE]->(r)
     
     WITH r
-    UNWIND $sources AS source_data
-    MERGE (s:Source {url: source_data.url})
-    ON CREATE SET s.title = source_data.title, s.snippet = source_data.snippet, s.source_type = source_data.source_type
-    MERGE (r)-[:CITED_BY]->(s)
-    
+    FOREACH (source_data IN $sources |
+        MERGE (s:Source {url: source_data.url})
+        ON CREATE SET s.title = source_data.title, s.snippet = source_data.snippet, s.source_type = source_data.source_type
+        MERGE (r)-[:CITED_BY]->(s)
+    )
+
     RETURN r
     """
-    
-    # Prepare sources list for UNWIND (mode="json" turns the source_type
+    # FOREACH (not UNWIND): UNWIND over an empty $sources yields zero rows,
+    # so RETURN r returned nothing and the whole reference was rolled back —
+    # every research result without extractable source URLs was lost.
+
+    # Prepare sources list (mode="json" turns the source_type
     # enum into a string, which Neo4j accepts as a property)
     sources_data = [s.model_dump(mode="json") for s in reference.sources]
     

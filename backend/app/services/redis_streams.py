@@ -350,6 +350,12 @@ async def consume_events(
                 continue
             logger.error("redis.response_error stream=%s error=%s", stream, exc)
             await asyncio.sleep(1)
+        except redis.TimeoutError:
+            # An idle blocking read can race the socket deadline (redis-py 8
+            # raises TimeoutError, which is NOT a ConnectionError subclass
+            # there). Benign — re-poll without logging noise. Without this,
+            # one idle window permanently killed the consumer loop.
+            continue
         except redis.ConnectionError as exc:
             logger.error("redis.consume_error stream=%s error=%s", stream, exc)
             await asyncio.sleep(1)  # Backoff before retry
