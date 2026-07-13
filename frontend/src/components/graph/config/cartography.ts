@@ -33,7 +33,7 @@ export interface CartographyPalette {
  * background with muted moss/khaki terrain tones.
  */
 export const CARTOGRAPHY_PALETTE: CartographyPalette = {
-  bg: '#F4F3E9',
+  bg: '#FFFFFF',
   terrain1: '#E3E6D3',
   terrain2: '#D8DDC4',
   terrain3: '#CDD4B6',
