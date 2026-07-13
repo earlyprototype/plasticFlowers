@@ -22,7 +22,14 @@ class Settings(BaseSettings):
     """Runtime settings loaded from environment variables or `.env` files."""
 
     model_config = SettingsConfigDict(
-        env_file=_REPO_ROOT_ENV_FILE, env_file_encoding="utf-8"
+        env_file=_REPO_ROOT_ENV_FILE,
+        env_file_encoding="utf-8",
+        # The root .env is shared by other consumers (docker compose, Next.js
+        # NEXT_PUBLIC_* vars, os.getenv-read dev switches), so keys that are
+        # not Settings fields must not be fatal — pydantic-settings defaults
+        # to extra="forbid", which made a .env copied from .env.example crash
+        # the app at import.
+        extra="ignore",
     )
 
     neo4j_uri: str = Field(
