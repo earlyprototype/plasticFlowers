@@ -225,51 +225,6 @@ describe('graphRenderer', () => {
       expect(node.parent().first().id()).toBe('flower1');
     });
 
-    it('should preserve collapse state on flower updates', () => {
-      // Create collapsed flower
-      cy.add({
-        group: 'nodes',
-        data: { id: 'flower1', label: 'Flower', kind: 'flower', collapsed: true },
-        classes: 'flower',
-      });
-
-      const flowers: Flower[] = [
-        {
-          id: 'flower1',
-          label: 'Updated Flower',
-          stem_node_id: 'node1',
-          edge_count: 1,
-          member_ids: ['node1'],
-          created_at: '2025-01-01T00:00:00Z',
-        },
-      ];
-
-      const nodes: Node[] = [
-        {
-          id: 'node1',
-          label: 'Node 1',
-          confidence: 0.8,
-          mentions: 1,
-          timestamps: [100],
-          inferred_type: 'concept',
-          flower_id: 'flower1',
-          created_at: '2025-01-01T00:00:00Z',
-          status: 'solid',
-        },
-      ];
-
-      const layoutResult: LayoutResult = {
-        nodePositions: new Map(),
-        lockedNodeIds: new Set(),
-        flowerStructureChanged: false,
-      };
-
-      syncGraphStructure(cy, { nodes, relationships: [], flowers }, layoutResult);
-
-      const flower = cy.getElementById('flower1');
-      expect(flower.data('collapsed')).toBe(true);
-      expect(flower.data('label')).toContain('▶'); // Collapsed icon
-    });
   });
 
   describe('parent normalization', () => {

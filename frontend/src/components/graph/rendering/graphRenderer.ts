@@ -216,9 +216,7 @@ function syncFlowers(
     const memberCount = members.length;
     
     const existing = cy.getElementById(flower.id);
-    const isCollapsed = existing?.data('collapsed') ?? false;
-    const collapseIcon = isCollapsed ? '▶' : '▼';
-    const labelWithCount = `${collapseIcon} ${flower.label} (${memberCount})`;
+    const labelWithCount = `${flower.label} (${memberCount})`;
     
     if (existing && existing.nonempty()) {
       // Update existing flower
@@ -226,7 +224,6 @@ function syncFlowers(
         id: flower.id,
         label: labelWithCount,
         kind: 'flower',
-        collapsed: isCollapsed,
       });
       existing.classes('flower');
       result.updatedNodeIds.add(flower.id);
@@ -238,7 +235,6 @@ function syncFlowers(
           id: flower.id,
           label: labelWithCount,
           kind: 'flower',
-          collapsed: false,
         },
         classes: 'flower',
         grabbable: true, // Enable dragging!
