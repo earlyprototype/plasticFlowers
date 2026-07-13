@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import math
 from collections import OrderedDict
 import os
 import random
@@ -104,11 +105,16 @@ def _embed_sync(
     client = _get_client(settings)
     
     try:
-        # Unified call for both Vertex and AI Studio
+        # Unified call for both Vertex and AI Studio. output_dimensionality is
+        # explicit so the vector always matches embedding_dimensions (and the
+        # Neo4j index) regardless of the model's native default.
         response = client.models.embed_content(
             model=settings.embedding_model,
             contents=text,
-            config={'task_type': 'retrieval_document'}
+            config={
+                'task_type': 'retrieval_document',
+                'output_dimensionality': settings.embedding_dimensions,
+            },
         )
     except Exception as exc:  # pragma: no cover
         raise EmbeddingError(f"Google embedding request failed: {exc}") from exc
@@ -118,10 +124,21 @@ def _embed_sync(
     # which is a list of ContentEmbedding objects
     if not response.embeddings:
          raise EmbeddingError("Google returned an empty embedding payload")
-         
+
     embedding = response.embeddings[0].values
     _validate_embedding(embedding, settings.embedding_dimensions)
-    return tuple(float(value) for value in embedding)
+    # gemini-embedding-001 unit-normalises only at its native 3072; truncated
+    # outputs (768/1536) are NOT normalised, so cosine similarity would be off.
+    # Normalise here so any configured dimension is safe. (No-op at 3072.)
+    return _l2_normalize(embedding)
+
+
+def _l2_normalize(embedding: List[float]) -> Tuple[float, ...]:
+    """Return the unit-length vector (cosine-safe for truncated embeddings)."""
+    norm = math.sqrt(sum(float(v) * float(v) for v in embedding))
+    if norm == 0.0:
+        return tuple(float(v) for v in embedding)
+    return tuple(float(v) / norm for v in embedding)
 
 
 def _validate_embedding(embedding: List[float] | None, expected_dimensions: int) -> None:
