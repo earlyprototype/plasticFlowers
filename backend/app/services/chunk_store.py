@@ -17,6 +17,9 @@ class ChunkStore:
     async def save(self, chunk: TranscriptChunk) -> None:
         await graph_db.save_chunk(chunk)
 
+    async def insert_once(self, chunk: TranscriptChunk) -> tuple[TranscriptChunk, bool]:
+        return await graph_db.insert_chunk_once(chunk)
+
     async def get(self, chunk_id: str) -> TranscriptChunk | None:
         return await graph_db.get_chunk(chunk_id)
 

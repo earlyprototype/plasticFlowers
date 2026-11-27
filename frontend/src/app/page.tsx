@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useCallback, useMemo, useState } from "react";
+import { FormEvent, useCallback, useMemo, useRef, useState } from "react";
 
 import { ExportPanel } from "../components/export";
 import { FiltersPanel, type FilterState } from "../components/filters";
@@ -14,7 +14,7 @@ import {
 import { MicControl } from "../components/MicControl";
 import { ResearchPanel } from "../components/research/ResearchPanel";
 import { useGraphState } from "../hooks";
-import { createSession, renameSession, listSessions } from "../lib/api";
+import { createSession, getSession, listSessions, updateSession } from "../lib/api";
 import type { SessionSummary } from "../lib/types";
 
 const DEFAULT_SESSION_ID = "";
@@ -25,7 +25,12 @@ const CARTOGRAPHY_ENABLED = isCartographyEnabled();
 
 export default function HomePage() {
   const [sessionInput, setSessionInput] = useState(DEFAULT_SESSION_ID);
-  const [sessionId, setSessionId] = useState<string>(DEFAULT_SESSION_ID);
+  const [session, setSession] = useState<SessionSummary | null>(null);
+  const sessionId = session?.id ?? DEFAULT_SESSION_ID;
+  const sessionName = session?.name ?? "";
+  const sessionCreatedAt = session?.created_at;
+  const sessionEndedAt = session?.ended_at ?? null;
+  const sessionEnded = sessionEndedAt !== null;
   const [filters, setFilters] = useState<FilterState>({
     status: "all",
     minConfidence: 0,
@@ -101,25 +106,19 @@ export default function HomePage() {
     [nodes.length, relationships.length, flowers.length],
   );
 
-  const [sessionEndedAt, setSessionEndedAt] = useState<string | null>(null);
-  // "Ended" is fully determined by the end timestamp — no second flag to
-  // keep in sync.
-  const sessionEnded = sessionEndedAt !== null;
-  // Session creation time (ISO) — the birth-colour anchor. Known when a
-  // session is created or picked from the list; unknown (null) for a pasted
-  // session id, where the anchor falls back to the earliest node birth.
-  const [sessionCreatedAt, setSessionCreatedAt] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const [sessionName, setSessionName] = useState<string>("");
   const [showSessionPicker, setShowSessionPicker] = useState(false);
   const [availableSessions, setAvailableSessions] = useState<SessionSummary[]>([]);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
 
-  // Session portrait (Move 5): the presentation render of the finished map.
-  // Auto-enters when the session ends; also toggleable from the header. The
-  // title is local state only — persisting it to the backend is a follow-up.
   const [portrait, setPortrait] = useState(false);
-  const [portraitTitle, setPortraitTitle] = useState("");
+  const [titleDraft, setTitleDraft] = useState<string | null>(null);
+  const [titleError, setTitleError] = useState("");
+  const [savingTitle, setSavingTitle] = useState(false);
+  const portraitTitle = titleDraft ?? session?.portrait_title ?? "";
+  const openRequest = useRef(0);
+  const activeSessionId = useRef(DEFAULT_SESSION_ID);
+  const pendingTitle = useRef<{ id: string; write: Promise<SessionSummary> } | null>(null);
 
   const handleLoadClick = async () => {
     setIsLoadingSessions(true);
@@ -135,15 +134,47 @@ export default function HomePage() {
     }
   };
 
-  const handleSelectSession = (session: SessionSummary) => {
+  const activateSession = (session: SessionSummary) => {
+    activeSessionId.current = session.id;
     setSessionInput(session.id);
-    setSessionId(session.id);
-    setSessionName(session.name);
-    setSessionEndedAt(session.ended_at);
-    setSessionCreatedAt(session.created_at);
+    setSession(session);
     setPortrait(false);
-    setPortraitTitle("");
+    setTitleDraft(null);
+    setTitleError("");
     setShowSessionPicker(false);
+  };
+
+  const openSession = async (id: string) => {
+    const request = ++openRequest.current;
+    try {
+      // A quick reopen must read the result of any save already sent for this session.
+      if (pendingTitle.current?.id === id) await pendingTitle.current.write.catch(() => {});
+      const record = await getSession(id);
+      if (request === openRequest.current) activateSession(record);
+    } catch (err) {
+      if (request === openRequest.current) alert(`Failed to open session: ${String(err)}`);
+    }
+  };
+
+  const handleSaveTitle = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!sessionId || pendingTitle.current || titleDraft === null) return;
+    const write = updateSession(sessionId, { portrait_title: titleDraft.trim() || null });
+    pendingTitle.current = { id: sessionId, write };
+    setSavingTitle(true);
+    setTitleError("");
+    try {
+      const saved = await write;
+      if (activeSessionId.current === saved.id) {
+        setSession((current) => current && { ...current, portrait_title: saved.portrait_title });
+        setTitleDraft(null);
+      }
+    } catch (err) {
+      if (activeSessionId.current === sessionId) setTitleError(`Title save failed: ${String(err)}`);
+    } finally {
+      pendingTitle.current = null;
+      setSavingTitle(false);
+    }
   };
 
   const handleRename = async () => {
@@ -151,8 +182,8 @@ export default function HomePage() {
     const newName = prompt("Enter a memorable name for this session:", sessionName || "");
     if (newName && newName.trim()) {
       try {
-        await renameSession(sessionId, { name: newName.trim() });
-        setSessionName(newName.trim());
+        const saved = await updateSession(sessionId, { name: newName.trim() });
+        setSession((current) => current?.id === saved.id ? { ...current, name: saved.name } : current);
       } catch (err) {
         console.error("Failed to rename session:", err);
         alert("Failed to rename session");
@@ -163,31 +194,16 @@ export default function HomePage() {
   const handleConnect = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const value = sessionInput.trim();
-    if (value) {
-      // useGraphState refreshes on the sessionId change; calling the current
-      // refreshGraph here would hit the OLD session (stale closure).
-      setSessionId(value);
-      setSessionEndedAt(null);
-      // A pasted id carries no session record — the birth-colour anchor
-      // falls back to the earliest node birth (see sessionStartMs).
-      setSessionCreatedAt(null);
-      setPortrait(false);
-      setPortraitTitle("");
-    }
+    if (value) void openSession(value);
   };
 
   const handleNewSession = async () => {
+    const request = ++openRequest.current;
     setIsCreating(true);
     try {
       const defaultName = `live-${Date.now()}`;
       const result = await createSession({ name: defaultName });
-      setSessionInput(result.id);
-      setSessionId(result.id);
-      setSessionName(result.name);
-      setSessionEndedAt(null);
-      setSessionCreatedAt(result.created_at);
-      setPortrait(false);
-      setPortraitTitle("");
+      if (request === openRequest.current) activateSession({ ...result, ended_at: null });
     } catch (err) {
       console.error('Failed to create session:', err);
       alert("Failed to create session. Check console/backend.");
@@ -199,11 +215,12 @@ export default function HomePage() {
   // Ending a session must produce a keepable artifact: once the end-session
   // API call succeeds, the UI flips into portrait mode automatically.
   const handleSessionEnded = useCallback((endedAt?: string) => {
-    setSessionEndedAt(endedAt ?? new Date().toISOString());
+    if (activeSessionId.current !== sessionId) return;
+    setSession((current) => current && { ...current, ended_at: endedAt ?? new Date().toISOString() });
     if (CARTOGRAPHY_ENABLED) {
       setPortrait(true);
     }
-  }, []);
+  }, [sessionId]);
 
   // Birth-colour anchor (Move 4): the session record's created_at when
   // known, otherwise the earliest birth among the UNFILTERED nodes — the
@@ -258,21 +275,34 @@ export default function HomePage() {
               {portrait ? "Exit portrait" : "Portrait"}
             </button>
             {portrait ? (
-              <input
-                type="text"
-                id="portrait-title"
-                value={portraitTitle}
-                onChange={(event) => setPortraitTitle(event.target.value)}
-                placeholder={defaultPortraitTitle(sessionId)}
-                aria-label="Portrait title"
-                style={{
-                  padding: "6px 10px",
-                  borderRadius: "6px",
-                  border: "1px solid #D4D4D4",
-                  fontSize: "13px",
-                  width: "260px",
-                }}
-              />
+              <form onSubmit={handleSaveTitle} style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                <input
+                  type="text"
+                  id="portrait-title"
+                  value={portraitTitle}
+                  disabled={savingTitle}
+                  onChange={(event) => {
+                    setTitleDraft(event.target.value);
+                    setTitleError("");
+                  }}
+                  placeholder={defaultPortraitTitle(sessionId)}
+                  aria-label="Portrait title"
+                  style={{
+                    padding: "6px 10px",
+                    borderRadius: "6px",
+                    border: "1px solid #D4D4D4",
+                    fontSize: "13px",
+                    width: "260px",
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={!sessionId || savingTitle || portraitTitle.trim() === (session?.portrait_title ?? "")}
+                >
+                  {savingTitle ? "Saving…" : "Save title"}
+                </button>
+                {titleError && <span role="alert">{titleError}</span>}
+              </form>
             ) : null}
           </div>
         ) : null}
@@ -409,7 +439,7 @@ export default function HomePage() {
                   availableSessions.map((session) => (
                     <div
                       key={session.id}
-                      onClick={() => handleSelectSession(session)}
+                      onClick={() => void openSession(session.id)}
                       style={{
                         padding: "10px 12px",
                         borderBottom: "1px solid #E5E7EB",

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 
 import { submitChunk } from "../lib/api";
 import type { ChunkSubmissionRequest } from "../lib/types";
@@ -136,90 +136,108 @@ export function createChunkBuffer(options: ChunkBufferOptions = {}) {
 
 export type ChunkBuffer = ReturnType<typeof createChunkBuffer>;
 
-export function useChunkDispatcher(options: UseChunkDispatcherOptions = {}) {
-  const {
-    sessionId,
-    minSentences = DEFAULT_MIN_SENTENCES,
-    maxDelayMs = DEFAULT_MAX_DELAY_MS,
-    clock,
-  } = options;
-  const [isDispatching, setIsDispatching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+type DispatcherOptions = Omit<UseChunkDispatcherOptions, "sessionId"> & {
+  submit?: (sessionId: string, payload: ChunkSubmissionRequest) => Promise<unknown>;
+  onChange?: () => void;
+};
 
-  // The buffer's stale-flush deadline calls the latest dispatch function via a ref
-  // (the buffer is created once, before dispatchChunk exists).
-  const deadlineFlushRef = useRef<() => void>(() => {});
+type SessionQueue = {
+  pending: ChunkSubmissionRequest[];
+  inFlight: Promise<void> | null;
+  error: string | null;
+};
 
-  // Lazily create the buffer once; thresholds/clock are fixed for the hook's lifetime.
-  const bufferRef = useRef<ChunkBuffer | null>(null);
-  if (bufferRef.current === null) {
-    bufferRef.current = createChunkBuffer({
-      minSentences,
-      maxDelayMs,
-      clock,
-      onDeadline: () => deadlineFlushRef.current(),
-    });
-  }
-  const buffer = bufferRef.current;
+export function createChunkDispatcher({ submit = submitChunk, onChange, ...options }: DispatcherOptions = {}) {
+  const queues = new Map<string, SessionQueue>();
 
-  const sessionIdRef = useRef(sessionId);
-  useEffect(() => {
-    sessionIdRef.current = sessionId;
-  }, [sessionId]);
-
-  const dispatchChunk = useCallback(async () => {
-    const targetSessionId = sessionIdRef.current;
-    if (!targetSessionId) return;
-    const payload = buffer.takeChunk();
-    if (!payload) return;
-
-    setIsDispatching(true);
-    setError(null);
-    try {
-      await submitChunk(targetSessionId, payload);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-      // Note: We do not restore the buffer on error to avoid ordering/duplication issues
-      // with new live input that may have arrived.
-    } finally {
-      setIsDispatching(false);
-    }
-  }, [buffer]);
-
-  useEffect(() => {
-    deadlineFlushRef.current = () => void dispatchChunk();
-  }, [dispatchChunk]);
-
-  // Clear any pending stale-flush deadline when the component unmounts.
-  useEffect(() => () => buffer.dispose(), [buffer]);
-
-  const append = useCallback(
-    async (text: string, isFinal: boolean) => {
-      if (!text.trim()) return;
-      buffer.append(text);
-      if (isFinal && (buffer.shouldDispatch() || buffer.isStale())) {
-        await dispatchChunk();
+  function deliver(sessionId: string, queue: SessionQueue): Promise<void> {
+    if (queue.inFlight) return queue.inFlight;
+    if (queue.error !== null) return Promise.resolve();
+    queue.inFlight = Promise.resolve().then(async () => {
+      try {
+        while (queue.pending.length > 0) {
+          await submit(sessionId, queue.pending[0]);
+          queue.pending.shift();
+        }
+      } catch (err) {
+        queue.error = err instanceof Error ? err.message : String(err);
+      } finally {
+        queue.inFlight = null;
+        if (queue.pending.length === 0) queues.delete(sessionId);
+        onChange?.();
       }
+    });
+    onChange?.();
+    return queue.inFlight;
+  }
+
+  return {
+    forSession(sessionId: string | null | undefined) {
+      const buffer = createChunkBuffer({ ...options, onDeadline: () => void dispatchNow() });
+
+      function dispatchNow(): Promise<void> {
+        if (!sessionId) return Promise.resolve();
+        const chunk = buffer.takeChunk();
+        if (!chunk) return Promise.resolve();
+        const queue: SessionQueue = queues.get(sessionId) ?? { pending: [], inFlight: null, error: null };
+        queues.set(sessionId, queue);
+        queue.pending.push({ ...chunk, client_request_id: crypto.randomUUID() });
+        onChange?.();
+        return deliver(sessionId, queue);
+      }
+
+      return {
+        buffer,
+        append(text: string, isFinal: boolean): Promise<void> {
+          if (!sessionId || !text.trim()) return Promise.resolve();
+          buffer.append(text);
+          if (isFinal && (buffer.shouldDispatch() || buffer.isStale())) return dispatchNow();
+          onChange?.();
+          return Promise.resolve();
+        },
+        dispatchNow,
+        reset() {
+          buffer.reset();
+          onChange?.();
+        },
+      };
     },
-    [buffer, dispatchChunk],
-  );
+    retry(sessionId: string) {
+      const queue = queues.get(sessionId);
+      if (!queue) return Promise.resolve();
+      queue.error = null;
+      return deliver(sessionId, queue);
+    },
+    get isDispatching() {
+      return Array.from(queues.values()).some((queue) => queue.inFlight !== null);
+    },
+    get failures() {
+      return Array.from(queues).flatMap(([sessionId, { error }]) =>
+        error === null ? [] : [{ sessionId, error }],
+      );
+    },
+  };
+}
 
-  const resetBuffer = useCallback(() => {
-    buffer.reset();
-  }, [buffer]);
+export function useChunkDispatcher({ sessionId, minSentences, maxDelayMs, clock }: UseChunkDispatcherOptions = {}) {
+  const [, onChange] = useReducer((revision: number) => revision + 1, 0);
+  const [dispatcher] = useState(() => createChunkDispatcher({ minSentences, maxDelayMs, clock, onChange }));
+  const session = useMemo(() => dispatcher.forSession(sessionId), [dispatcher, sessionId]);
 
-  return useMemo(
-    () => ({
-      append,
-      dispatchNow: dispatchChunk,
-      reset: resetBuffer,
-      isDispatching,
-      error,
-      pendingText: buffer.pendingText,
-      pendingSentences: buffer.pendingSentences,
-    }),
-    [append, dispatchChunk, resetBuffer, isDispatching, error, buffer],
-  );
+  useEffect(() => () => { void session.dispatchNow(); }, [session]);
+
+  const failures = dispatcher.failures;
+  return {
+    append: session.append,
+    dispatchNow: session.dispatchNow,
+    reset: session.reset,
+    retry: dispatcher.retry,
+    isDispatching: dispatcher.isDispatching,
+    error: failures[0]?.error ?? null,
+    failures,
+    pendingText: session.buffer.pendingText,
+    pendingSentences: session.buffer.pendingSentences,
+  };
 }
 
 function countSentences(text: string): number {

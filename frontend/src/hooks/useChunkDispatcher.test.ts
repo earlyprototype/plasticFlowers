@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { createChunkBuffer } from "./useChunkDispatcher";
+import { createChunkBuffer, createChunkDispatcher } from "./useChunkDispatcher";
+import type { ChunkSubmissionRequest } from "../lib/types";
 
 describe("createChunkBuffer", () => {
   it("does not reach the dispatch gate on short unpunctuated text", () => {
@@ -151,5 +152,96 @@ describe("stale-flush deadline (onDeadline)", () => {
     buffer.append("second chunk");
     vi.advanceTimersByTime(15000);
     expect(onDeadline).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("session-bound delivery", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  it("sends each short utterance to the session that captured it when its deadline fires", async () => {
+    const submit = vi.fn(async (_session: string, _payload: ChunkSubmissionRequest) => {});
+    const dispatcher = createChunkDispatcher({ submit, clock: () => Date.now() / 1000 });
+    const a = dispatcher.forSession("A");
+    a.append("alpha", true);
+    await vi.advanceTimersByTimeAsync(5000);
+    const b = dispatcher.forSession("B");
+    b.append("bravo", true);
+
+    await vi.advanceTimersByTimeAsync(10000);
+    expect(submit.mock.calls.map(([id, chunk]) => [id, chunk.text])).toEqual([["A", "alpha"]]);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(submit.mock.calls.map(([id, chunk]) => [id, chunk.text])).toEqual([
+      ["A", "alpha"], ["B", "bravo"],
+    ]);
+  });
+
+  it("holds later speech during a failed request and retries the original payload once", async () => {
+    let rejectFirst!: (error: Error) => void;
+    const submit = vi.fn(async (_session: string, _payload: ChunkSubmissionRequest) => {});
+    submit.mockImplementationOnce(() => new Promise<void>((_, reject) => { rejectFirst = reject; }));
+    let seconds = 10;
+    const dispatcher = createChunkDispatcher({ submit, clock: () => seconds });
+    const a = dispatcher.forSession("A");
+    a.append("first", true);
+    seconds = 11;
+    const firstAttempt = a.dispatchNow();
+    await Promise.resolve();
+
+    seconds = 12;
+    a.append("second", true);
+    seconds = 13;
+    void a.dispatchNow();
+    expect(submit).toHaveBeenCalledTimes(1);
+    rejectFirst(new Error("connection lost"));
+    await firstAttempt;
+    expect(dispatcher.failures).toEqual([{ sessionId: "A", error: "connection lost" }]);
+    await vi.advanceTimersByTimeAsync(30000);
+    expect(submit).toHaveBeenCalledTimes(1);
+
+    seconds = 99;
+    await Promise.all([dispatcher.retry("A"), dispatcher.retry("A")]);
+    await a.dispatchNow();
+    await dispatcher.retry("A");
+    const [[firstSession, first], retry, [secondSession, second]] = submit.mock.calls;
+    expect(firstSession).toBe("A");
+    expect(first).toEqual({
+      text: "first", start_time: 10, end_time: 11, client_request_id: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    });
+    expect(retry).toEqual(["A", first]);
+    expect(secondSession).toBe("A");
+    expect(second).toEqual({
+      text: "second", start_time: 12, end_time: 13, client_request_id: expect.stringMatching(/^[0-9a-f-]{36}$/i),
+    });
+    expect(second.client_request_id).not.toBe(first.client_request_id);
+    expect(submit).toHaveBeenCalledTimes(3);
+    expect(dispatcher.failures).toEqual([]);
+  });
+
+  it("continues sending B while A is in flight or waiting for retry after a permanent rejection", async () => {
+    let rejectA!: (error: Error) => void;
+    const submit = vi.fn(async (session: string, _payload: ChunkSubmissionRequest) => {
+      if (session === "A") throw new Error("session ended");
+    });
+    submit.mockImplementationOnce(() => new Promise<void>((_, reject) => { rejectA = reject; }));
+    const dispatcher = createChunkDispatcher({ submit });
+    const a = dispatcher.forSession("A");
+    a.append("ending", true);
+    const firstAttempt = a.dispatchNow();
+    await Promise.resolve();
+    const b = dispatcher.forSession("B");
+    b.append("new session", true);
+    void b.dispatchNow();
+    await Promise.resolve();
+    expect(submit.mock.calls.map(([id]) => id)).toEqual(["A", "B"]);
+
+    rejectA(new Error("session ended"));
+    await firstAttempt;
+    b.append("more speech", true);
+    await b.dispatchNow();
+    expect(submit.mock.calls.map(([id]) => id)).toEqual(["A", "B", "B"]);
+    await dispatcher.retry("A");
+    expect(dispatcher.failures).toEqual([{ sessionId: "A", error: "session ended" }]);
+    expect(submit.mock.calls[3]).toEqual(submit.mock.calls[0]);
   });
 });

@@ -1,6 +1,5 @@
 'use client';
 
-import { useEffect } from 'react';
 import { useSpeechRecognition } from '../hooks/useSpeechRecognition';
 import { useChunkDispatcher } from '../hooks/useChunkDispatcher';
 
@@ -10,26 +9,17 @@ type MicControlProps = {
 
 export function MicControl({ sessionId }: MicControlProps) {
   const dispatcher = useChunkDispatcher({ sessionId });
-  
+
   const speech = useSpeechRecognition({
+    sessionId,
     lang: 'en-GB',
     continuous: true,
     interimResults: true,
     onTranscript: (text, isFinal) => {
-      // console.log('[MIC] Transcript:', text, 'final:', isFinal);
-      // Only append final results to the chunk buffer to avoid duplication
-      if (isFinal) {
-        dispatcher.append(text, isFinal);
-      }
+      if (isFinal) void dispatcher.append(text, true);
     },
-    onEnd: () => {
-      // Speech recognition ended — flush whatever is buffered straight to the
-      // API instead of letting the final utterance wait for the stale timer.
-      void dispatcher.dispatchNow();
-    },
+    onEnd: dispatcher.dispatchNow,
   });
-
-  // console.log('[MIC] sessionId:', sessionId, 'supported:', speech.isSupported, 'state:', speech.state, 'error:', speech.error);
 
   if (!speech.isSupported) {
     return (
@@ -39,9 +29,16 @@ export function MicControl({ sessionId }: MicControlProps) {
     );
   }
 
+  const label = {
+    idle: sessionId ? '🎤 Start Listening' : 'Select a session to record',
+    stopping: 'Finishing speech…',
+    listening: '🛑 Stop Listening',
+  }[speech.state];
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
       <button
+        disabled={!sessionId || speech.state === 'stopping'}
         onClick={speech.isListening ? speech.stop : speech.start}
         style={{
           padding: '16px 24px',
@@ -54,7 +51,7 @@ export function MicControl({ sessionId }: MicControlProps) {
           color: '#fff',
         }}
       >
-        {speech.isListening ? '🛑 Stop Listening' : '🎤 Start Listening'}
+        {label}
       </button>
 
       {speech.isListening && (
@@ -80,11 +77,12 @@ export function MicControl({ sessionId }: MicControlProps) {
         </div>
       )}
 
-      {dispatcher.error && (
-        <div style={{ padding: '8px', background: '#FEF3C7', borderRadius: '6px', color: '#92400E' }}>
-          Dispatch error: {dispatcher.error}
+      {dispatcher.failures.map((failure) => (
+        <div key={failure.sessionId} role="alert" style={{ padding: '8px', background: '#FEF3C7', borderRadius: '6px', color: '#92400E' }}>
+          <p>Speech for session {failure.sessionId} is waiting to send. {failure.error}</p>
+          <button type="button" onClick={() => void dispatcher.retry(failure.sessionId)}>Retry sending speech</button>
         </div>
-      )}
+      ))}
     </div>
   );
 }

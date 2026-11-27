@@ -82,6 +82,7 @@ export interface ReferencesResponse {
 export interface SessionSummary {
   id: string;
   name: string;
+  portrait_title?: string | null;
   created_at: string;
   ended_at: string | null;
 }
@@ -104,14 +105,9 @@ export interface SessionCreateResponse {
   created_at: string;
 }
 
-export interface SessionRenameRequest {
-  name: string;
-}
-
-export interface SessionNameResponse {
-  id: string;
-  name: string;
-}
+export type SessionUpdateRequest =
+  | { name: string; portrait_title?: string | null }
+  | { name?: string; portrait_title: string | null };
 
 export interface SessionEndResponse {
   id: string;
@@ -119,6 +115,7 @@ export interface SessionEndResponse {
 }
 
 export interface ChunkSubmissionRequest {
+  client_request_id?: string;
   text: string;
   start_time: number;
   end_time: number;

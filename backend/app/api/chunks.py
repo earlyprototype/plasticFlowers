@@ -12,7 +12,7 @@ import asyncio
 import logging
 import os
 from collections import defaultdict
-from uuid import uuid4
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from fastapi import APIRouter, HTTPException, Path, status
 
@@ -79,17 +79,15 @@ async def submit_chunk(
     Returns 202 Accepted immediately. Processing happens in background.
     SSE events notify when complete.
     """
-    # Validate session exists and is not ended
+    # A keyed replay resolves to the same Neo4j unique id, even on another worker.
+    request_id = payload.client_request_id
+    identifier = uuid5(NAMESPACE_URL, f"{session_id}/{request_id}") if request_id else uuid4()
+    chunk_id = f"chunk_{identifier.hex}"
     session = await get_session_record(session_id)
     if session is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Session not found",
-        )
-    if session.ended_at:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Session has ended; no further chunks accepted",
         )
 
     # Truncate massive chunks to protect LLM context
@@ -102,7 +100,6 @@ async def submit_chunk(
         text = text[:50000]
 
     # Create chunk record
-    chunk_id = f"chunk_{uuid4().hex}"
     chunk = TranscriptChunk(
         id=chunk_id,
         text=text,
@@ -111,12 +108,21 @@ async def submit_chunk(
         session_id=session_id,
     )
 
-    # Persist the chunk to Neo4j (single save point: transcript context for
-    # the Gardener plus transcript/VTT/JSON export reads).
-    await chunk_store.save(chunk)
+    if session.ended_at:
+        # A lost acknowledgement may be retried after the session ends.
+        stored = await chunk_store.get(chunk_id) if request_id else None
+        if stored is None:
+            raise HTTPException(status.HTTP_409_CONFLICT, "Session has ended; no further chunks accepted")
+        created = False
+    else:
+        stored, created = await chunk_store.insert_once(chunk)
 
-    # Queue background processing
-    _queue_processing(session_id, chunk)
+    if created:
+        _queue_processing(session_id, chunk)
+    else:
+        original_text = stored.original_text if stored.original_text is not None else stored.text
+        if (original_text, stored.start_time, stored.end_time) != (text, chunk.start_time, chunk.end_time):
+            raise HTTPException(status.HTTP_409_CONFLICT, "Request ID already used for a different chunk")
 
     return ChunkSubmissionResponse(chunk_id=chunk_id)
 

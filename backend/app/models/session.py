@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class SessionSummary(BaseModel):
@@ -18,6 +18,7 @@ class SessionSummary(BaseModel):
 
     id: str = Field(..., description="Session identifier")
     name: str = Field(..., description="Human-friendly session label")
+    portrait_title: Optional[str] = Field(None, description="Custom title for the session portrait")
     language_variant: str = Field(
         "en-GB",
         description="Language variant for spelling consistency (en-GB or en-US)",
@@ -58,17 +59,17 @@ class SessionCreateResponse(BaseModel):
     created_at: datetime
 
 
-class SessionRenameRequest(BaseModel):
-    name: str = Field(..., description="New session name (required)")
+class SessionUpdateRequest(BaseModel):
+    name: Optional[str] = Field(None, description="New session name")
+    portrait_title: Optional[str] = Field(None, description="Custom portrait title, or null to clear")
+
+    @model_validator(mode="after")
+    def validate_changes(self) -> "SessionUpdateRequest":
+        if not self.model_fields_set or ("name" in self.model_fields_set and self.name is None):
+            raise ValueError("Supply a session name or a portrait title")
+        return self
 
 
 class SessionEndResponse(BaseModel):
     id: str
     ended_at: datetime
-
-
-class SessionNameResponse(BaseModel):
-    """Shape returned by PATCH /sessions/{id}."""
-
-    id: str
-    name: str

@@ -73,6 +73,7 @@ Container for a talk/meeting.
 |----------|------|---------|
 | `id` | string | Unique identifier |
 | `name` | string | User-provided name |
+| `portrait_title` | string? | Custom title for the portrait canvas and exported PNG. An absent property uses the generated title. |
 | `created_at` | datetime | When started |
 | `ended_at` | datetime? | When stopped (null if live) |
 | `transcript` | string | Full accumulated text |

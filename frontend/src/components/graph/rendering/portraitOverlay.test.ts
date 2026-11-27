@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import cytoscape, { type Core } from 'cytoscape';
 
-import type { Flower, Node } from '../../../lib/types';
+import { getSession, listSessions, updateSession } from '../../../lib/api';
+import type { Flower, Node, SessionSummary } from '../../../lib/types';
 import {
   computePortraitInfo,
   createPortraitOverlay,
@@ -109,6 +110,43 @@ describe('portraitOverlay', () => {
   });
 
   const texts = () => ctx.calls.filter((c) => c.op === 'fillText').map((c) => String(c.args[0]));
+
+  it.each([
+    { source: 'picker', savedTitle: 'Coastal gardens', expected: 'Coastal gardens' },
+    { source: 'pasted ID', savedTitle: 'Botany', expected: 'Botany' },
+    { source: 'legacy session', savedTitle: null, expected: 'Session session_a' },
+  ])('draws the reopened title on the canvas and PNG for $source', async ({ source, savedTitle, expected }) => {
+    const session: SessionSummary = {
+      id: 'session_a',
+      name: 'Workshop',
+      created_at: '2026-07-10T10:00:00Z',
+      ended_at: null,
+    };
+    vi.stubGlobal('fetch', async (url: string, init?: RequestInit) => {
+      const path = new URL(url).pathname;
+      if (path === '/api/sessions/session_a' && init?.method === 'PATCH') {
+        session.portrait_title = JSON.parse(String(init.body)).portrait_title;
+        return Response.json(session);
+      }
+      if (path === '/api/sessions/session_a') return Response.json({ ...session, transcript: '' });
+      if (path === '/api/sessions') return Response.json({ sessions: [session] });
+      throw new Error(`Unexpected request to ${path}`);
+    });
+    if (savedTitle) await updateSession(session.id, { portrait_title: savedTitle });
+    const id = source === 'picker' ? (await listSessions()).sessions[0].id : session.id;
+    const reopened = await getSession(id);
+
+    overlay = createPortraitOverlay(cy, makeStubCanvas(ctx));
+    overlay.setInfo(computePortraitInfo({
+      nodes: [], flowers: [], sessionId: reopened.id, portraitTitle: reopened.portrait_title,
+    }));
+    flushFrame();
+    expect(texts()).toContain(expected);
+
+    const png = makeStubCtx();
+    overlay.renderTo(png as unknown as CanvasRenderingContext2D, 800, 600, 2);
+    expect(png.calls.filter((c) => c.op === 'fillText').map((c) => c.args[0])).toContain(expected);
+  });
 
   it('draws the double-rule neatline, title block and time legend', () => {
     overlay = createPortraitOverlay(cy, makeStubCanvas(ctx));

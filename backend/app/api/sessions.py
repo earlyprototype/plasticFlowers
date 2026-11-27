@@ -20,8 +20,8 @@ from ..models import (
     SessionDetail,
     SessionEndResponse,
     SessionListResponse,
-    SessionNameResponse,
-    SessionRenameRequest,
+    SessionSummary,
+    SessionUpdateRequest,
 )
 from ..services import (
     create_session_record,
@@ -100,26 +100,19 @@ async def get_session(session_id: str = Path(..., description="Session identifie
     chunks = await list_chunks_for_session(session_id)
     transcript = " ".join(chunk.text for chunk in chunks)
 
-    return SessionDetail(
-        id=session.id,
-        name=session.name,
-        language_variant=session.language_variant,
-        created_at=session.created_at,
-        ended_at=session.ended_at,
-        transcript=transcript,
-    )
+    return SessionDetail(**session.model_dump(), transcript=transcript)
 
 
 @router.patch(
     "/{session_id}",
-    response_model=SessionNameResponse,
-    summary="Rename session",
+    response_model=SessionSummary,
+    summary="Update session name or portrait title",
 )
-async def rename_session(
-    payload: SessionRenameRequest,
+async def update_session(
+    payload: SessionUpdateRequest,
     session_id: str = Path(..., description="Session identifier"),
-) -> SessionNameResponse:
-    """PATCH /sessions/{id} — rename a session."""
+) -> SessionSummary:
+    """Update the supplied session fields."""
 
     session = await get_session_record(session_id)
     if session is None:
@@ -128,8 +121,10 @@ async def rename_session(
             detail=f"Session {session_id} not found",
         )
 
-    updated = await update_session_record(session_id, name=payload.name)
-    return SessionNameResponse(id=updated.id, name=updated.name)
+    portrait_title = None
+    if "portrait_title" in payload.model_fields_set:
+        portrait_title = (payload.portrait_title or "").strip()
+    return await update_session_record(session_id, name=payload.name, portrait_title=portrait_title)
 
 
 @router.delete(
