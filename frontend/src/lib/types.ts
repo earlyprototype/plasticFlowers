@@ -22,6 +22,7 @@ export interface Node {
   flower_id: string | null;
   embedding?: number[] | null; // stored for similarity search (not sent yet)
   created_at: string; // ISO datetime
+  last_active?: string | null;
   status: NodeStatus;
 }
 
@@ -82,6 +83,7 @@ export interface ReferencesResponse {
 export interface SessionSummary {
   id: string;
   name: string;
+  language_variant: string;
   created_at: string;
   ended_at: string | null;
 }

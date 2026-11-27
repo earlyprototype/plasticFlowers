@@ -18,6 +18,26 @@ describe('parseSessionExport', () => {
     expect(parseSessionExport(JSON.stringify(bundle)).graph.nodes[0].status).toBe('legacy');
   });
 
+  it.each([null, '2026-06-01T10:00:00.123456+01:00'])('preserves last_active %s', (last_active) => {
+    const bundle = structuredClone(garden);
+    Object.assign(bundle.graph.nodes[0], { last_active });
+    expect(parseSessionExport(JSON.stringify(bundle)).graph.nodes[0].last_active).toBe(last_active);
+  });
+
+  it.each(['yesterday morning', '2026-02-30T10:00:00Z'])('rejects last_active %s', (last_active) => {
+    const bundle = structuredClone(garden);
+    Object.assign(bundle.graph.nodes[0], { last_active });
+    expect(() => parseSessionExport(JSON.stringify(bundle))).toThrow(/graph\.nodes\.0\.last_active/);
+  });
+
+  it.each([
+    [undefined, 'en-GB'],
+    ['en-US', 'en-US'],
+  ])('reads language_variant %s', (language_variant, expected) => {
+    const bundle = { ...garden, session: { ...garden.session, language_variant } };
+    expect(parseSessionExport(JSON.stringify(bundle)).session.language_variant).toBe(expected);
+  });
+
   it.each([
     '2000-02-29T00:15:00.123456+05:30',
     '2024-02-29T23:59:59.1-04:00',
@@ -67,9 +87,22 @@ describe('parseSessionExport', () => {
     ['missing relationship', { connecting_relationships: [irrigates, { ...irrigates, id: 'absent' }] }, /bridge.*missing relationship.*absent/i],
     ['edge inside one flower', { connecting_relationships: [grows] }, /bridge.*grows/i],
     ['reversed direction', { source_flower_id: 'garden', target_flower_id: 'water' }, /bridge.*irrigates/i],
-    ['inconsistent endpoints', { connecting_relationships: [{ ...irrigates, source_id: 'spout' }] }, /bridge.*irrigates/i],
   ])('rejects a bridge with %s', (_name, overrides, error) => {
     expect(() => parseSessionExport(withBridge(overrides))).toThrow(error);
+  });
+
+  it.each([
+    ['source_id', 'spout'],
+    ['target_id', 'roof'],
+    ['category', 'TEMPORAL'],
+    ['description', 'drains roots'],
+    ['confidence', 0.5],
+    ['evidence', 'The barrel was empty.'],
+    ['source', 'gardener'],
+    ['created_at', '2026-06-01T10:01:00Z'],
+  ] as const)('identifies the bridge relationship and conflicting %s', (field, value) => {
+    const content = withBridge({ connecting_relationships: [{ ...irrigates, [field]: value }] });
+    expect(() => parseSessionExport(content)).toThrow(new RegExp(`irrigates.*${field}`));
   });
 
   it.each<[string, string, RegExp]>([

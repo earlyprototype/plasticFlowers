@@ -105,7 +105,13 @@ test('opens export files offline, preserves a valid view on error, and clears th
       source_flower_id: 'absent-flower', target_flower_id: 'garden',
       connecting_relationships: [graph.relationships[2]],
     }), /bridge.*missing flower.*absent-flower/i],
+    [({ graph }) => graph.bridges.push({
+      source_flower_id: 'water', target_flower_id: 'garden',
+      connecting_relationships: [{ ...graph.relationships[2], description: 'drains roots' }],
+    }), /irrigates.*description/i],
     [({ session }) => { session.created_at = '2026-02-30T10:00:00Z'; }, /session\.created_at.*timestamp/i],
+    [({ graph }) => { graph.nodes[0].last_active = '2026-02-30T10:00:00Z'; }, /graph\.nodes\.0\.last_active.*timestamp/i],
+    [({ session }) => { session.language_variant = ['en-GB']; }, /session\.language_variant.*string/i],
   ]) {
     const invalid = structuredClone(garden);
     // Make partial replacement of either the graph or the transcript observable.

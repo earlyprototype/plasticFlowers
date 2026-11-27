@@ -20,9 +20,10 @@ relationship from Rain barrel to Basil roots. The JSON exporter leaves
 membership of the relationship's endpoints.
 
 Each assigned node must appear exactly once in its flower's member list.
-A supplied bridge must cite graph relationships that run from its source
-flower to its target flower. If the JSON, a timestamp or a graph reference
-is invalid, the viewer shows the error and keeps the previous graph and transcript.
+Each relationship listed in a bridge must match its graph record in every
+field and run from the bridge's source flower to its target flower. If a
+file is invalid, the viewer shows the error and keeps the previous graph
+and transcript.
 Open [empty.json](fixtures/empty.json) to clear the graph and transcript.
 
 ## Offline browser regression

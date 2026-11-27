@@ -26,6 +26,7 @@ const node = z.object({
   flower_id: id.nullable(),
   embedding: z.array(z.number()).nullable().optional(),
   created_at: date,
+  last_active: date.nullable().optional(),
   status: z.enum(['ghost', 'solid', 'legacy']),
 });
 
@@ -40,10 +41,12 @@ const relationship = z.object({
   source: z.enum(['builder', 'gardener']),
   created_at: date,
 });
+const relationshipFields = relationship.keyof().options;
 
 const bundle = z.object({
   session: z.object({
     id, name: z.string(), created_at: date, ended_at: date.nullable(), transcript: z.string(),
+    language_variant: z.string().default('en-GB'),
   }),
   graph: z.object({
     nodes: z.array(node),
@@ -128,8 +131,9 @@ export function parseSessionExport(text: string): SessionExportBundle {
     for (const connection of bridge.connecting_relationships) {
       const edge = edgesById.get(connection.id);
       if (!edge) throw new Error(`Bridge refers to missing relationship "${connection.id}".`);
-      if (edge.source_id !== connection.source_id || edge.target_id !== connection.target_id) {
-        throw new Error(`Bridge endpoints disagree with graph relationship "${edge.id}".`);
+      const conflict = relationshipFields.find((field) => connection[field] !== edge[field]);
+      if (conflict) {
+        throw new Error(`Bridge relationship "${edge.id}" differs from the graph in field "${conflict}".`);
       }
       const sourceNode = nodesById.get(edge.source_id);
       const targetNode = nodesById.get(edge.target_id);
