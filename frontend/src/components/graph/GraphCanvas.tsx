@@ -37,6 +37,8 @@ export type GraphCanvasProps = {
   nodes: Node[];
   relationships: Relationship[];
   flowers: Flower[];
+  /** Keep pan, zoom and hover available while fixing elements in place. */
+  readOnly?: boolean;
   connectionState?: ConnectionState;
   lastChunkError?: string | null;
   className?: string;
@@ -110,6 +112,7 @@ export function GraphCanvas({
   nodes,
   relationships,
   flowers,
+  readOnly = false,
   connectionState = 'idle',
   lastChunkError,
   className,
@@ -335,6 +338,10 @@ export function GraphCanvas({
       cyRef.current = null;
     };
   }, [getAnimController]);
+
+  useEffect(() => {
+    cyRef.current?.autoungrabify(readOnly);
+  }, [readOnly]);
 
   // Portrait mode entry/exit. Entering hides ghosts (and any mid-wilt
   // leftovers), flips the controller into its calm portrait mode (no verbs,
@@ -575,8 +582,18 @@ export function GraphCanvas({
         }
       }
 
-      // 4. Execute the growth sequence (camera-first, then bloom + sprout)
-      await controller.executeAnimationSequence(cy, syncResult);
+      if (readOnly) {
+        // An export opens at its final layout. Label-sized nodes get their
+        // bounds at first paint. Enabling label events then refreshes the
+        // hit areas, including bridges between those nodes.
+        const elements = cy.elements();
+        if (elements.length) {
+          cy.fit(elements, 50);
+          cy.one('render', () => elements.style('text-events', 'yes'));
+        }
+      } else {
+        await controller.executeAnimationSequence(cy, syncResult);
+      }
       if (cancelled || cy.destroyed()) return;
 
       // 4.5. Repaint workaround: at low zoom Cytoscape's layered texture
@@ -605,7 +622,7 @@ export function GraphCanvas({
         syncDebounceTimerRef.current = null;
       }
     };
-  }, [nodes, relationships, flowers, sessionStartMs, sessionId, getAnimController]);
+  }, [nodes, relationships, flowers, sessionStartMs, sessionId, readOnly, getAnimController]);
 
   return (
     <div className={`graph-canvas ${className ?? ''}`}>
@@ -619,7 +636,7 @@ export function GraphCanvas({
         </div>
       ) : (
         <>
-          <div className={statusClass}>{connectionMessages[connectionState]}</div>
+          <div className={statusClass}>{readOnly ? 'Read-only' : connectionMessages[connectionState]}</div>
 
           <div className="graph-canvas__controls">
             <button onClick={handleFit} title="Fit to view" aria-label="Fit to view">

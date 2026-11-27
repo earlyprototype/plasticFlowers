@@ -324,6 +324,17 @@ const CARTOGRAPHY_STYLE_OVERRIDES = [
     },
   },
   {
+    // A flower with no members has no terrain label. Center its name on the node.
+    selector: 'node.flower:childless',
+    style: {
+      'text-opacity': 1,
+      'text-valign': 'center',
+      'text-margin-y': 0,
+      'font-family': CARTOGRAPHY_SERIF_STACK,
+      color: CARTOGRAPHY_PALETTE.ink,
+    },
+  },
+  {
     selector: 'node.flower.hovered',
     style: {
       'border-width': 0.5,

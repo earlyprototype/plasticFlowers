@@ -1,0 +1,131 @@
+{
+  "session": {
+    "id": "garden-demo",
+    "name": "Watering the rooftop garden",
+    "language_variant": "en-GB",
+    "created_at": "2026-06-01T10:00:00Z",
+    "ended_at": "2026-06-01T10:01:00Z",
+    "transcript": "The rooftop beds hold basil. The downspout fills the rain barrel.\nBarrel water feeds the basil roots."
+  },
+  "graph": {
+    "nodes": [
+      {
+        "id": "roof",
+        "label": "Rooftop beds",
+        "confidence": 0.9,
+        "mentions": 1,
+        "timestamps": [
+          1
+        ],
+        "inferred_type": "concept",
+        "flower_id": "garden",
+        "created_at": "2026-06-01T10:00:00Z",
+        "status": "solid"
+      },
+      {
+        "id": "roots",
+        "label": "Basil roots",
+        "confidence": 0.9,
+        "mentions": 1,
+        "timestamps": [
+          2
+        ],
+        "inferred_type": "concept",
+        "flower_id": "garden",
+        "created_at": "2026-06-01T10:00:00Z",
+        "status": "solid"
+      },
+      {
+        "id": "barrel",
+        "label": "Rain barrel",
+        "confidence": 0.9,
+        "mentions": 1,
+        "timestamps": [
+          3
+        ],
+        "inferred_type": "concept",
+        "flower_id": "water",
+        "created_at": "2026-06-01T10:00:00Z",
+        "status": "solid"
+      },
+      {
+        "id": "spout",
+        "label": "Downspout",
+        "confidence": 0.9,
+        "mentions": 1,
+        "timestamps": [
+          4
+        ],
+        "inferred_type": "concept",
+        "flower_id": "water",
+        "created_at": "2026-06-01T10:00:00Z",
+        "status": "solid"
+      }
+    ],
+    "relationships": [
+      {
+        "id": "grows",
+        "source_id": "roof",
+        "target_id": "roots",
+        "category": "CAUSAL",
+        "description": "supports growth",
+        "confidence": 0.95,
+        "evidence": "The rooftop beds hold basil.",
+        "source": "builder",
+        "created_at": "2026-06-01T10:00:00Z"
+      },
+      {
+        "id": "collects",
+        "source_id": "spout",
+        "target_id": "barrel",
+        "category": "CAUSAL",
+        "description": "fills barrel",
+        "confidence": 0.95,
+        "evidence": "The downspout fills the rain barrel.",
+        "source": "builder",
+        "created_at": "2026-06-01T10:00:00Z"
+      },
+      {
+        "id": "irrigates",
+        "source_id": "barrel",
+        "target_id": "roots",
+        "category": "CAUSAL",
+        "description": "waters roots",
+        "confidence": 0.95,
+        "evidence": "Barrel water feeds the basil roots.",
+        "source": "builder",
+        "created_at": "2026-06-01T10:00:00Z"
+      }
+    ],
+    "flowers": [
+      {
+        "id": "garden",
+        "label": "Rooftop garden",
+        "stem_node_id": "roof",
+        "edge_count": 1,
+        "member_ids": [
+          "roof",
+          "roots"
+        ],
+        "created_at": "2026-06-01T10:00:00Z"
+      },
+      {
+        "id": "water",
+        "label": "Rain collection",
+        "stem_node_id": "barrel",
+        "edge_count": 1,
+        "member_ids": [
+          "barrel",
+          "spout"
+        ],
+        "created_at": "2026-06-01T10:00:00Z"
+      }
+    ],
+    "bridges": []
+  },
+  "metadata": {
+    "version": "1.0",
+    "exported_at": "2026-06-01T10:02:00Z",
+    "chunk_count": 2
+  }
+}

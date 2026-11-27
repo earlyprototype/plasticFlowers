@@ -2,7 +2,7 @@
 // Spec sources: `_docs/_dev/_MVP/_api/01_contracts.md`, `_docs/_dev/_MVP/_schema/01_data_model.md`,
 // `_docs/_dev/_MVP/_ALIGNMENT.md`, `_dev/_plan/02_gate_contracts/contract_snapshot.md`
 
-export type NodeStatus = "ghost" | "solid";
+export type NodeStatus = "ghost" | "solid" | "legacy";
 export type RelationshipCategory =
   | "CAUSAL"
   | "STRUCTURAL"
@@ -22,6 +22,7 @@ export interface Node {
   flower_id: string | null;
   embedding?: number[] | null; // stored for similarity search (not sent yet)
   created_at: string; // ISO datetime
+  last_active?: string | null;
   status: NodeStatus;
 }
 
@@ -82,6 +83,7 @@ export interface ReferencesResponse {
 export interface SessionSummary {
   id: string;
   name: string;
+  language_variant: string;
   created_at: string;
   ended_at: string | null;
 }

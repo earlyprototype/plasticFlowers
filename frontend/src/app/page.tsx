@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useCallback, useMemo, useState } from "react";
+import "./nunito.css";
 
 import { ExportPanel } from "../components/export";
 import { FiltersPanel, type FilterState } from "../components/filters";
@@ -233,6 +234,8 @@ export default function HomePage() {
     >
       <header style={{ maxWidth: "820px" }}>
         <h1 style={{ margin: "0 0 8px", fontSize: "28px" }}>Live Graph + SSE Monitor</h1>
+        {/* A fresh document releases the home page's remote font faces before files open. */}
+        <a href="/viewer">Open exported conversation</a>
         <p style={{ margin: 0, color: "#444" }}>
           Use this harness to watch Server-Sent Events in real time. Connect to a session, start the replay
           script, then bounce the backend (Ctrl+C / restart). The status badge on the canvas should move
