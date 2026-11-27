@@ -2,7 +2,10 @@ import { z } from 'zod';
 import type { SessionExportBundle } from './types';
 
 const id = z.string().min(1);
-const date = z.string().refine((value) => Number.isFinite(Date.parse(value)), 'Expected a date');
+const date = z.string()
+  .datetime({ local: true, offset: true, message: 'Expected a valid ISO timestamp' })
+  // Python datetimes start at year 1. Date.parse also checks the offset range.
+  .refine((value) => !value.startsWith('0000-') && Number.isFinite(Date.parse(value)), 'Invalid timestamp');
 const confidence = z.number().min(0).max(1);
 
 function graphText(maxLength: number) {
@@ -70,7 +73,7 @@ export function parseSessionExport(text: string): SessionExportBundle {
   }
 
   // Cytoscape shares one ID namespace across compound nodes, concepts and edges.
-  const { nodes, flowers, relationships } = result.data.graph;
+  const { nodes, flowers, relationships, bridges } = result.data.graph;
   const ids = new Set<string>();
   for (const element of [...flowers, ...nodes, ...relationships]) {
     if (ids.has(element.id)) throw new Error(`Duplicate graph ID "${element.id}".`);
@@ -83,6 +86,7 @@ export function parseSessionExport(text: string): SessionExportBundle {
     }
   }
   const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  const listedMembers = new Set<string>();
   for (const flower of flowers) {
     for (const memberId of flower.member_ids) {
       const member = nodesById.get(memberId);
@@ -90,15 +94,47 @@ export function parseSessionExport(text: string): SessionExportBundle {
       if (member.flower_id !== flower.id) {
         throw new Error(`Flower "${flower.id}" lists member "${memberId}", which does not belong to it.`);
       }
+      if (listedMembers.has(memberId)) {
+        throw new Error(`Flower "${flower.id}" lists duplicate member "${memberId}".`);
+      }
+      listedMembers.add(memberId);
     }
     if (flower.stem_node_id && !flower.member_ids.includes(flower.stem_node_id)) {
       throw new Error(`Flower "${flower.id}" names stem "${flower.stem_node_id}" outside its member list.`);
+    }
+  }
+  for (const node of nodes) {
+    if (node.flower_id !== null && !listedMembers.has(node.id)) {
+      throw new Error(`Flower "${node.flower_id}" is missing assigned node "${node.id}" from its member list.`);
     }
   }
   for (const edge of relationships) {
     for (const endpoint of [edge.source_id, edge.target_id]) {
       if (!nodesById.has(endpoint)) {
         throw new Error(`Relationship "${edge.id}" refers to missing node "${endpoint}".`);
+      }
+    }
+  }
+  const edgesById = new Map(relationships.map((edge) => [edge.id, edge]));
+  for (const bridge of bridges) {
+    const { source_flower_id: source, target_flower_id: target } = bridge;
+    for (const flowerId of [source, target]) {
+      if (!flowerIds.has(flowerId)) throw new Error(`Bridge refers to missing flower "${flowerId}".`);
+    }
+    if (source === target) throw new Error(`Bridge names flower "${source}" at both ends.`);
+    if (!bridge.connecting_relationships.length) {
+      throw new Error(`Bridge from "${source}" to "${target}" has no connecting relationships.`);
+    }
+    for (const connection of bridge.connecting_relationships) {
+      const edge = edgesById.get(connection.id);
+      if (!edge) throw new Error(`Bridge refers to missing relationship "${connection.id}".`);
+      if (edge.source_id !== connection.source_id || edge.target_id !== connection.target_id) {
+        throw new Error(`Bridge endpoints disagree with graph relationship "${edge.id}".`);
+      }
+      const sourceNode = nodesById.get(edge.source_id);
+      const targetNode = nodesById.get(edge.target_id);
+      if (sourceNode?.flower_id !== source || targetNode?.flower_id !== target) {
+        throw new Error(`Bridge relationship "${edge.id}" does not connect flower "${source}" to "${target}".`);
       }
     }
   }

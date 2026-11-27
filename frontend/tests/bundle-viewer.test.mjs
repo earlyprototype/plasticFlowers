@@ -93,18 +93,25 @@ test('opens export files offline, preserves a valid view on error, and clears th
 
   const garden = JSON.parse(await readFile(fixture('rooftop-garden.json'), 'utf8'));
   for (const [change, error] of [
-    [(g) => g.flowers[0].member_ids.push('missing-member'), /garden.*member.*missing-member/i],
-    [(g) => g.flowers[0].member_ids.push('barrel'), /garden.*member.*barrel/i],
-    [(g) => { g.flowers[0].stem_node_id = 'missing-stem'; }, /garden.*stem.*missing-stem/i],
-    [(g) => { g.flowers[0].stem_node_id = 'barrel'; }, /garden.*stem.*barrel/i],
-    [(g) => { g.relationships[2].description = ''; }, /graph\.relationships\.2\.description.*2.*80/i],
-    [(g) => { g.flowers[0].label = ''; }, /graph\.flowers\.0\.label.*2.*64/i],
+    [({ graph }) => graph.flowers[0].member_ids.push('missing-member'), /garden.*member.*missing-member/i],
+    [({ graph }) => graph.flowers[0].member_ids.push('barrel'), /garden.*member.*barrel/i],
+    [({ graph }) => { graph.flowers[0].member_ids = ['roof']; }, /garden.*missing.*roots/i],
+    [({ graph }) => graph.flowers[0].member_ids.push('roots'), /garden.*duplicate.*roots/i],
+    [({ graph }) => { graph.flowers[0].stem_node_id = 'missing-stem'; }, /garden.*stem.*missing-stem/i],
+    [({ graph }) => { graph.flowers[0].stem_node_id = 'barrel'; }, /garden.*stem.*barrel/i],
+    [({ graph }) => { graph.relationships[2].description = ''; }, /graph\.relationships\.2\.description.*2.*80/i],
+    [({ graph }) => { graph.flowers[0].label = ''; }, /graph\.flowers\.0\.label.*2.*64/i],
+    [({ graph }) => graph.bridges.push({
+      source_flower_id: 'absent-flower', target_flower_id: 'garden',
+      connecting_relationships: [graph.relationships[2]],
+    }), /bridge.*missing flower.*absent-flower/i],
+    [({ session }) => { session.created_at = '2026-02-30T10:00:00Z'; }, /session\.created_at.*timestamp/i],
   ]) {
     const invalid = structuredClone(garden);
     // Make partial replacement of either the graph or the transcript observable.
     invalid.graph.flowers[1].label = 'Replacement flower';
     invalid.session.transcript = 'Replacement transcript';
-    change(invalid.graph);
+    change(invalid);
     await checkRejected(JSON.stringify(invalid), error);
   }
 

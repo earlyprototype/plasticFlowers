@@ -18,6 +18,60 @@ describe('parseSessionExport', () => {
     expect(parseSessionExport(JSON.stringify(bundle)).graph.nodes[0].status).toBe('legacy');
   });
 
+  it.each([
+    '2000-02-29T00:15:00.123456+05:30',
+    '2024-02-29T23:59:59.1-04:00',
+    '2026-06-01T10:00:00',
+  ])('preserves the export timestamp %s', (created_at) => {
+    const bundle = { ...garden, session: { ...garden.session, created_at } };
+    expect(parseSessionExport(JSON.stringify(bundle)).session.created_at).toBe(created_at);
+  });
+
+  it.each([
+    '2026-02-30T12:00:00Z',
+    '1900-02-29T10:00:00.123456+01:00',
+    '0000-01-01T00:00:00Z',
+    '2026-06-01T10:00:00+24:00',
+  ])('reports the field containing the invalid timestamp %s', (created_at) => {
+    const bundle = { ...garden, session: { ...garden.session, created_at } };
+    expect(() => parseSessionExport(JSON.stringify(bundle))).toThrow(/session\.created_at/i);
+  });
+
+  it.each([
+    [['roof'], /garden.*missing.*roots/i],
+    [['roots', 'roof', 'roots'], /garden.*duplicate.*roots/i],
+  ] as const)('requires each assigned node exactly once in its flower (%j)', (members, error) => {
+    const bundle = structuredClone(garden);
+    bundle.graph.flowers[0].member_ids = [...members];
+    expect(() => parseSessionExport(JSON.stringify(bundle))).toThrow(error);
+  });
+
+  const [grows, collects, irrigates] = garden.graph.relationships;
+  const bridge = {
+    source_flower_id: 'water', target_flower_id: 'garden', connecting_relationships: [irrigates],
+  };
+  function withBridge(overrides: Partial<typeof bridge> = {}) {
+    const graph = { ...garden.graph, bridges: [{ ...bridge, ...overrides }] };
+    return JSON.stringify({ ...garden, graph });
+  }
+
+  it('accepts a supplied bridge matching the graph', () => {
+    expect(parseSessionExport(withBridge()).graph.bridges).toEqual([bridge]);
+  });
+
+  it.each<[string, Partial<typeof bridge>, RegExp]>([
+    ['missing source flower', { source_flower_id: 'absent' }, /bridge.*missing flower.*absent/i],
+    ['missing target flower', { target_flower_id: 'absent' }, /bridge.*missing flower.*absent/i],
+    ['no connecting relationships', { connecting_relationships: [] }, /bridge.*connecting relationship/i],
+    ['same flower', { target_flower_id: 'water', connecting_relationships: [collects] }, /bridge.*water/i],
+    ['missing relationship', { connecting_relationships: [irrigates, { ...irrigates, id: 'absent' }] }, /bridge.*missing relationship.*absent/i],
+    ['edge inside one flower', { connecting_relationships: [grows] }, /bridge.*grows/i],
+    ['reversed direction', { source_flower_id: 'garden', target_flower_id: 'water' }, /bridge.*irrigates/i],
+    ['inconsistent endpoints', { connecting_relationships: [{ ...irrigates, source_id: 'spout' }] }, /bridge.*irrigates/i],
+  ])('rejects a bridge with %s', (_name, overrides, error) => {
+    expect(() => parseSessionExport(withBridge(overrides))).toThrow(error);
+  });
+
   it.each<[string, string, RegExp]>([
     ['invalid JSON', '{', /valid JSON/i],
     ['missing session', '{}', /session/i],
