@@ -13,16 +13,23 @@ I wanted the opposite of a transcript. A transcript is a wall of text you have t
 
 ## Quick start (MVP demo)
 
-Works on Windows, macOS, and Linux. You'll need Docker (Desktop or Engine), Node.js 18+, and Python 3.11+.
+From the project root, use Python 3.11+, Node.js 18.17+ with npm, and a running Docker engine with Compose v2. The Windows launcher uses Compose's `up --wait` option to wait for the Neo4j and Redis health checks.
 
-1. Copy `.env.example` to `.env` (PowerShell: `Copy-Item .env.example .env`) and set:
+1. Copy `.env.example` to `.env` (PowerShell: `Copy-Item .env.example .env`). Set the Neo4j password to a new password of at least eight characters. Set the Gemini key if using real inference.
    ```
    NEO4J_URI=neo4j://127.0.0.1:7687
    NEO4J_PASSWORD=<your_password>
    GEMINI_API_KEY=<your_key>
    ```
-   The start scripts refuse to run while `.env` still holds placeholder values.
-2. Start everything — Neo4j and Redis in Docker, the backend on port 8010, the frontend on port 3000:
+2. On Windows, install the backend and frontend dependencies once. Rerun the install commands when dependencies change.
+
+   ```powershell
+   python -m venv .venv
+   .\.venv\Scripts\python.exe -m pip install -e 'backend[dev]'
+   npm.cmd ci --prefix frontend
+   ```
+
+3. Start Neo4j and Redis in Docker, the backend on port 8010, and the frontend on port 3000.
 
    ```bash
    # Linux / macOS
@@ -30,13 +37,17 @@ Works on Windows, macOS, and Linux. You'll need Docker (Desktop or Engine), Node
    ```
    ```powershell
    # Windows
-   .\scripts\start_mvp.ps1              # add -FakeMode to run offline, no API key needed
+   .\scripts\start_mvp.ps1 -FakeMode   # synthetic extraction and embeddings
    ```
 
-   Prefer it stepwise? The Makefile breaks the same thing into pieces: `make setup` (venv + `pip install -e 'backend[dev]'` + `npm install`), `make up` (Neo4j + Redis), `make backend`, `make frontend`, `make demo-fake`, `make test`, `make down`.
-3. Open http://localhost:3000 and start talking.
+   On Windows, omit `-FakeMode` for real inference. The launcher opens the frontend once `http://127.0.0.1:8010/health` and `http://127.0.0.1:3000/` both return HTTP 200. Add `-NoBrowser` to keep the browser closed. Press Ctrl+C to stop both app services. To stop the containers, run `docker compose -f docker/docker-compose.yml --env-file .env down`.
 
-To verify the stack end to end, there's a smoke test (`python backend/scripts/smoke_test.py`) and a full walkthrough in the runbook at `_docs/_runbook/MVP_DEMO.md`.
+   On macOS or Linux the Makefile also provides `make setup`, `make up`, `make backend`, `make frontend`, `make demo-fake`, `make test` and `make down`.
+4. Open http://localhost:3000 and start talking.
+
+With the stack running, use `.venv\Scripts\python.exe backend/scripts/smoke_test.py` on Windows or `.venv/bin/python backend/scripts/smoke_test.py` on macOS and Linux for the end-to-end smoke test. The demo walkthrough is in `_docs/_runbook/MVP_DEMO.md`.
+
+To test the Windows launcher itself, stop the app and run `python scripts/tests/test_windows_launcher.py -v`. The tests use local HTTP fixtures on ports 8010 and 3000 and a Docker Compose stand-in.
 
 ## How it's built
 

@@ -9,6 +9,7 @@ Spec references:
 from __future__ import annotations
 
 from typing import Optional
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -30,6 +31,7 @@ class TranscriptChunk(BaseModel):
 
 
 class ChunkSubmissionRequest(BaseModel):
+    client_request_id: UUID | None = Field(None, description="Stable per chunk across retries")
     text: str = Field(..., description="Transcribed content from Web Speech API")
     start_time: float = Field(..., description="Chunk start timestamp (seconds)")
     end_time: float = Field(..., description="Chunk end timestamp (seconds)")

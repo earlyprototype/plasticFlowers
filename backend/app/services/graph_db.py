@@ -664,8 +664,9 @@ async def update_session_record(
     *,
     name: Optional[str] = None,
     ended_at: Optional[datetime] = None,
+    portrait_title: Optional[str] = None,
 ) -> SessionSummary:
-    """Update Session properties (name and/or ended_at)."""
+    """Update supplied Session properties. An empty portrait title clears it."""
 
     driver = await get_driver()
     set_clauses: List[str] = []
@@ -674,6 +675,9 @@ async def update_session_record(
     if name is not None:
         set_clauses.append("s.name = $name")
         params["name"] = name
+    if portrait_title is not None:
+        set_clauses.append("s.portrait_title = $portrait_title")
+        params["portrait_title"] = portrait_title or None
     if ended_at is not None:
         set_clauses.append("s.ended_at = $ended_at")
         params["ended_at"] = ended_at
@@ -819,27 +823,32 @@ def _session_from_value(value: Neo4jNode) -> SessionSummary:
 
 
 async def save_chunk(chunk: TranscriptChunk) -> TranscriptChunk:
-    """Persist a TranscriptChunk to Neo4j and link to Session.
-    
-    Raises:
-        ValueError: If the session does not exist.
-        RuntimeError: If Neo4j fails to create the chunk.
-    """
+    """Create or update a chunk and link it to its session."""
+    stored, _ = await _write_chunk(chunk, overwrite=True)
+    return stored
 
+
+async def insert_chunk_once(chunk: TranscriptChunk) -> tuple[TranscriptChunk, bool]:
+    """Return the stored chunk and whether this transaction created it."""
+    return await _write_chunk(chunk, overwrite=False)
+
+
+async def _write_chunk(chunk: TranscriptChunk, *, overwrite: bool) -> tuple[TranscriptChunk, bool]:
     driver = await get_driver()
     chunk_props = chunk.model_dump()
-    query = """
-    MATCH (s:Session {id: $session_id})
-    MERGE (c:TranscriptChunk {id: $chunk_id})
+    on_match = "ON MATCH SET c = $chunk" if overwrite else ""
+    query = f"""
+    MATCH (s:Session {{id: $session_id}})
+    MERGE (c:TranscriptChunk {{id: $chunk_id}})
     ON CREATE SET c = $chunk
-    ON MATCH SET c = $chunk
+    {on_match}
     MERGE (s)-[:HAS_CHUNK]->(c)
     RETURN c AS chunk
     """
     params = {"session_id": chunk.session_id, "chunk_id": chunk.id, "chunk": chunk_props}
 
     async with driver.session() as session:
-        async def _work(tx, cypher: str, parameters: Dict[str, Any]) -> TranscriptChunk:
+        async def _work(tx, cypher: str, parameters: Dict[str, Any]) -> tuple[TranscriptChunk, bool]:
             result = await tx.run(cypher, **parameters)
             record = await result.single()
             if record is None:
@@ -847,7 +856,8 @@ async def save_chunk(chunk: TranscriptChunk) -> TranscriptChunk:
                     f"Session {parameters['session_id']} not found - cannot save chunk. "
                     "Ensure session is created before submitting chunks."
                 )
-            return _chunk_from_value(record["chunk"])
+            summary = await result.consume()
+            return _chunk_from_value(record["chunk"]), summary.counters.nodes_created == 1
 
         return await session.execute_write(_work, query, params)
 

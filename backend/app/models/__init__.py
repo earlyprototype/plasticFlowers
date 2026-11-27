@@ -32,9 +32,8 @@ from .session import (
     SessionDetail,
     SessionEndResponse,
     SessionListResponse,
-    SessionNameResponse,
-    SessionRenameRequest,
     SessionSummary,
+    SessionUpdateRequest,
 )
 from .vocabulary import ProofreadCheckpoint, SessionContext, SessionVocabulary, TranscriptCorrection
 from .reference import (
@@ -90,10 +89,9 @@ __all__ = [
     "SessionDetail",
     "SessionEndResponse",
     "SessionListResponse",
-    "SessionNameResponse",
     "SessionContext",
-    "SessionRenameRequest",
     "SessionSummary",
+    "SessionUpdateRequest",
     "SessionVocabulary",
     "TranscriptCorrection",
     # Reference models (Phase G: Researcher)

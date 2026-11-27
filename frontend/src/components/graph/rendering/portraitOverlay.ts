@@ -57,7 +57,7 @@ export function computePortraitInfo(args: {
   /** UNFILTERED session flowers. */
   flowers: Flower[];
   /** Custom plate title; falls back to 'Session <short-id>'. */
-  portraitTitle?: string;
+  portraitTitle?: string | null;
   sessionId?: string;
   /** ISO end time (if the session ended) — extends the duration line. */
   sessionEndedAt?: string | null;

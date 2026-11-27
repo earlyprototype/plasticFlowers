@@ -61,13 +61,7 @@ async def export_json(session_id: str = Path(..., description="Session identifie
     graph_state = await fetch_graph_state(session_id)
 
     return SessionExportBundle(
-        session=SessionDetail(
-            id=session.id,
-            name=session.name,
-            created_at=session.created_at,
-            ended_at=session.ended_at,
-            transcript=transcript,
-        ),
+        session=SessionDetail(**session.model_dump(), transcript=transcript),
         graph=GraphStateResponse(
             nodes=graph_state.nodes,
             relationships=graph_state.relationships,

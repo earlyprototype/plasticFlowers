@@ -15,8 +15,8 @@ import type {
   SessionEndResponse,
   SessionExportBundle,
   SessionListResponse,
-  SessionNameResponse,
-  SessionRenameRequest,
+  SessionSummary,
+  SessionUpdateRequest,
 } from "./types";
 
 const API_BASE_URL = (process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8010").replace(/\/$/, "");
@@ -107,11 +107,11 @@ export async function getSession(sessionId: string): Promise<SessionDetail> {
   return requestJSON<SessionDetail>(`/sessions/${encodeId(sessionId)}`);
 }
 
-export async function renameSession(
+export async function updateSession(
   sessionId: string,
-  payload: SessionRenameRequest,
-): Promise<SessionNameResponse> {
-  return requestJSON<SessionNameResponse>(
+  payload: SessionUpdateRequest,
+): Promise<SessionSummary> {
+  return requestJSON<SessionSummary>(
     `/sessions/${encodeId(sessionId)}`,
     jsonRequest("PATCH", payload),
   );

@@ -1,202 +1,148 @@
 <#
 .SYNOPSIS
-    Start all plasticFlower MVP services for demo.
-
-.DESCRIPTION
-    Launches Neo4j (Docker), backend (FastAPI), and frontend (Next.js) in sequence.
-    Opens browser to http://localhost:3000 when ready.
-
+    Start the plasticFlowers demo after completing the Windows setup in README.md.
 .PARAMETER FakeMode
-    If specified, runs backend with PLASTICFLOWER_FAKE_LLM=1 and PLASTICFLOWER_FAKE_EMBEDDINGS=1
-    for testing without Gemini API calls.
-
-.EXAMPLE
-    .\scripts\start_mvp.ps1
-    Starts all services with real Gemini.
-
-.EXAMPLE
-    .\scripts\start_mvp.ps1 -FakeMode
-    Starts all services with fake LLM/embeddings.
+    Use synthetic LLM responses and embeddings.
+.PARAMETER NoBrowser
+    Keep the launcher in the terminal without opening the frontend in a browser.
 #>
-
-param(
-    [switch]$FakeMode
-)
+[CmdletBinding()]
+param([switch]$FakeMode, [switch]$NoBrowser)
 
 $ErrorActionPreference = "Stop"
 $ProjectRoot = Split-Path -Parent $PSScriptRoot
-
-Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "  plasticFlower MVP Startup" -ForegroundColor Cyan
-Write-Host "========================================`n" -ForegroundColor Cyan
-
-# 1. Check prerequisites
-Write-Host "[1/5] Checking prerequisites..." -ForegroundColor Yellow
-
-if (-not (Get-Command docker -ErrorAction SilentlyContinue)) {
-    Write-Host "ERROR: Docker not found. Please install Docker Desktop." -ForegroundColor Red
-    exit 1
-}
-
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-    Write-Host "ERROR: Node.js not found. Please install Node.js 18+." -ForegroundColor Red
-    exit 1
-}
-
-if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
-    Write-Host "ERROR: Python not found. Please install Python 3.11+." -ForegroundColor Red
-    exit 1
-}
-
-Write-Host "  Docker, Node.js, Python found." -ForegroundColor Green
-
-# 2. Check .env file
-Write-Host "`n[2/5] Checking environment..." -ForegroundColor Yellow
-
 $EnvFile = Join-Path $ProjectRoot ".env"
-if (-not (Test-Path $EnvFile)) {
-    Write-Host "ERROR: .env file not found." -ForegroundColor Red
-    Write-Host "  Create it from the template, then fill in real values:" -ForegroundColor Yellow
-    Write-Host "    Copy-Item .env.example .env" -ForegroundColor Yellow
-    Write-Host "  At minimum set NEO4J_PASSWORD (and GEMINI_API_KEY for real mode)." -ForegroundColor Yellow
-    exit 1
-}
-
-# Load .env
-Get-Content $EnvFile | ForEach-Object {
-    if ($_ -match "^([^#][^=]+)=(.*)$") {
-        [Environment]::SetEnvironmentVariable($matches[1].Trim(), $matches[2].Trim(), "Process")
-    }
-}
-
-if ([string]::IsNullOrWhiteSpace($env:NEO4J_PASSWORD) -or $env:NEO4J_PASSWORD -eq "your-neo4j-password-here") {
-    Write-Host "ERROR: NEO4J_PASSWORD in .env is empty or still the placeholder value." -ForegroundColor Red
-    Write-Host "  Edit $EnvFile and set NEO4J_PASSWORD to a real password before starting." -ForegroundColor Yellow
-    exit 1
-}
-
-if (-not $FakeMode -and [string]::IsNullOrWhiteSpace($env:GEMINI_API_KEY)) {
-    Write-Host "WARNING: GEMINI_API_KEY not set. Real Gemini mode may fail." -ForegroundColor Yellow
-}
-
-Write-Host "  Environment loaded." -ForegroundColor Green
-
-# 3. Start Neo4j
-Write-Host "`n[3/5] Starting Neo4j..." -ForegroundColor Yellow
-
-$DockerDir = Join-Path $ProjectRoot "docker"
-Push-Location $DockerDir
-
-$Neo4jRunning = docker ps --filter "name=plasticflower-neo4j" --format "{{.Names}}" 2>$null
-if ($Neo4jRunning) {
-    Write-Host "  Neo4j already running." -ForegroundColor Green
-} else {
-    docker compose --env-file $EnvFile up -d
-    Write-Host "  Neo4j starting... waiting 10s for readiness." -ForegroundColor Yellow
-    Start-Sleep -Seconds 10
-}
-
-Pop-Location
-
-# 4. Start Backend
-Write-Host "`n[4/5] Starting backend..." -ForegroundColor Yellow
-
 $BackendDir = Join-Path $ProjectRoot "backend"
+$FrontendDir = Join-Path $ProjectRoot "frontend"
+$Python = Join-Path $ProjectRoot ".venv\Scripts\python.exe"
+$BackendUrl = "http://127.0.0.1:8010"
+$FrontendUrl = "http://127.0.0.1:3000"
+$Jobs = @()
+$OriginalEnvironment = @{}
 
-if ($FakeMode) {
-    $env:PLASTICFLOWER_FAKE_LLM = "1"
-    $env:PLASTICFLOWER_FAKE_EMBEDDINGS = "1"
-}
-# Respect fake-mode switches loaded from .env — do not clobber them here.
-$EffectiveFakeMode = $env:PLASTICFLOWER_FAKE_LLM -match '^(1|true|yes|on)$' -or
-    $env:PLASTICFLOWER_FAKE_EMBEDDINGS -match '^(1|true|yes|on)$'
-if ($FakeMode) {
-    Write-Host "  Fake mode enabled (no Gemini API calls)." -ForegroundColor Yellow
-} elseif ($EffectiveFakeMode) {
-    Write-Host "  Fake mode enabled via .env (PLASTICFLOWER_FAKE_LLM/PLASTICFLOWER_FAKE_EMBEDDINGS)." -ForegroundColor Yellow
-} else {
-    Write-Host "  Real Gemini mode." -ForegroundColor Green
-}
-
-$BackendJob = Start-Job -ScriptBlock {
-    param($Dir, $Fake)
-    Set-Location $Dir
-    if ($Fake) {
-        $env:PLASTICFLOWER_FAKE_LLM = "1"
-        $env:PLASTICFLOWER_FAKE_EMBEDDINGS = "1"
+function Set-LaunchVariable($Name, $Value) {
+    if (-not $OriginalEnvironment.ContainsKey($Name)) {
+        $OriginalEnvironment[$Name] = [Environment]::GetEnvironmentVariable($Name, "Process")
     }
-    & python -m uvicorn app.main:app --host 127.0.0.1 --port 8010
-} -ArgumentList $BackendDir, $FakeMode
+    [Environment]::SetEnvironmentVariable($Name, $Value, "Process")
+}
 
-Write-Host "  Backend starting on http://127.0.0.1:8010..." -ForegroundColor Yellow
-Start-Sleep -Seconds 5
+function Start-ServiceJob($Name, $Directory, $Program, $Arguments) {
+    Start-Job -Name $Name -ArgumentList $Directory, $Program, $Arguments -ScriptBlock {
+        param($Dir, $Exe, $CommandArguments)
+        Set-Location -LiteralPath $Dir -ErrorAction Stop
+        & $Exe @CommandArguments 2>&1 | ForEach-Object { "$_" }
+        if ($LASTEXITCODE -ne 0) { throw "Exit code $LASTEXITCODE." }
+    }
+}
 
-# Check backend health
+function Check-ServiceJobs {
+    foreach ($Job in $Jobs) {
+        Receive-Job $Job -ErrorAction Continue | Out-Host
+        if ($Job.State -notin @("Running", "NotStarted")) {
+            throw "$($Job.Name) exited unexpectedly. $($Job.ChildJobs[0].JobStateInfo.Reason)"
+        }
+    }
+}
+
+function Wait-ServiceResponse($Name, $Url) {
+    Write-Host "Waiting for $Name at $Url"
+    $Deadline = [DateTime]::UtcNow.AddSeconds(120)
+    do {
+        Check-ServiceJobs
+        try {
+            $Response = Invoke-WebRequest -Uri $Url -UseBasicParsing -TimeoutSec 5 -MaximumRedirection 0
+            if ($Response.StatusCode -eq 200) { return }
+        } catch {
+            # Both servers can refuse connections or return a 503 during startup.
+        }
+        Start-Sleep -Milliseconds 500
+    } while ([DateTime]::UtcNow -lt $Deadline)
+    throw "$Name failed to become ready at $Url within 120 seconds."
+}
+
 try {
-    $Health = Invoke-WebRequest -Uri "http://127.0.0.1:8010/health" -UseBasicParsing -TimeoutSec 10
-    if ($Health.StatusCode -eq 200) {
-        Write-Host "  Backend healthy." -ForegroundColor Green
+    if (-not (Test-Path -LiteralPath $EnvFile -PathType Leaf)) {
+        throw "Copy .env.example to .env and set NEO4J_PASSWORD before starting."
+    }
+    $Settings = @{}
+    foreach ($Line in (Get-Content -Encoding UTF8 -LiteralPath $EnvFile)) {
+        if ($Line -match '^\s*([A-Za-z_][A-Za-z_0-9]*)\s*=(.*)$') {
+            $Name = $Matches[1]
+            $Value = $Matches[2].Trim()
+            if ($Value -match '^"(.*)"$' -or $Value -match "^'(.*)'$") { $Value = $Matches[1] }
+            $Settings[$Name] = $Value
+            Set-LaunchVariable $Name $Value
+        }
+    }
+    if ([string]::IsNullOrWhiteSpace($Settings.NEO4J_PASSWORD) -or $Settings.NEO4J_PASSWORD -eq "your-neo4j-password-here") {
+        throw "Set NEO4J_PASSWORD in .env to a non-placeholder password."
+    }
+    if ($FakeMode) {
+        Set-LaunchVariable "PLASTICFLOWER_FAKE_LLM" "1"
+        Set-LaunchVariable "PLASTICFLOWER_FAKE_EMBEDDINGS" "1"
+    }
+    $FakeLlm = $env:PLASTICFLOWER_FAKE_LLM -match '^(1|true|yes|on)$'
+    $FakeEmbeddings = $env:PLASTICFLOWER_FAKE_EMBEDDINGS -match '^(1|true|yes|on)$'
+    if (-not ($FakeLlm -and $FakeEmbeddings) -and
+        ([string]::IsNullOrWhiteSpace($env:GEMINI_API_KEY) -or $env:GEMINI_API_KEY -eq "your-gemini-api-key-here")) {
+        Write-Warning "Set GEMINI_API_KEY for real inference or use -FakeMode for synthetic responses and embeddings."
+    }
+
+    if (-not (Test-Path -LiteralPath $Python -PathType Leaf)) {
+        throw "Backend setup required. Follow the Windows virtual environment and pip install steps in README.md."
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $FrontendDir "node_modules") -PathType Container)) {
+        throw "Frontend setup required. Run npm.cmd ci --prefix frontend from the project root."
+    }
+    $Npm = (Get-Command npm.cmd -CommandType Application -TotalCount 1).Source
+    $Docker = (Get-Command docker -CommandType Application -TotalCount 1).Source
+
+    # Check the fixed ports before probing them so an existing instance cannot satisfy readiness.
+    foreach ($Service in @(@("Backend", 8010), @("Frontend", 3000))) {
+        $Listener = [Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback, $Service[1])
+        try {
+            $Listener.ExclusiveAddressUse = $true
+            $Listener.Start()
+        } catch {
+            throw "$($Service[0]) failed to reserve port $($Service[1]). Check whether another instance is running."
+        } finally {
+            $Listener.Stop()
+        }
+    }
+
+    Write-Host "Starting Neo4j and Redis..."
+    $ComposeFile = Join-Path $ProjectRoot "docker\docker-compose.yml"
+    & $Docker compose -f $ComposeFile --env-file $EnvFile up -d --wait --wait-timeout 180
+    if ($LASTEXITCODE -ne 0) { throw "Docker Compose failed (exit code $LASTEXITCODE). Check Neo4j and Redis." }
+
+    $Jobs += Start-ServiceJob "Backend" $BackendDir $Python @("-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8010")
+    Wait-ServiceResponse "Backend" "$BackendUrl/health"
+
+    Set-LaunchVariable "NEXT_PUBLIC_API_URL" $BackendUrl
+    $Jobs += Start-ServiceJob "Frontend" $FrontendDir $Npm @("run", "dev")
+    Wait-ServiceResponse "Frontend" "$FrontendUrl/"
+    Check-ServiceJobs
+
+    Write-Host "MVP Ready!"
+    Write-Host "Backend: $BackendUrl/health"
+    Write-Host "Frontend: $FrontendUrl/"
+    Write-Host "Fake LLM: $FakeLlm. Fake embeddings: $FakeEmbeddings."
+    Write-Host "Press Ctrl+C to stop the backend and frontend. Docker services stay running."
+    if (-not $NoBrowser) { Start-Process "$FrontendUrl/" }
+    while ($true) {
+        Start-Sleep -Milliseconds 500
+        Check-ServiceJobs
     }
 } catch {
-    Write-Host "  Backend may still be starting. Check http://127.0.0.1:8010/health" -ForegroundColor Yellow
-}
-
-# 5. Start Frontend
-Write-Host "`n[5/5] Starting frontend..." -ForegroundColor Yellow
-
-$FrontendDir = Join-Path $ProjectRoot "frontend"
-$env:NEXT_PUBLIC_API_URL = "http://127.0.0.1:8010"
-
-$FrontendJob = Start-Job -ScriptBlock {
-    param($Dir)
-    Set-Location $Dir
-    $env:NEXT_PUBLIC_API_URL = "http://127.0.0.1:8010"
-    & npm run dev
-} -ArgumentList $FrontendDir
-
-Write-Host "  Frontend starting on http://localhost:3000..." -ForegroundColor Yellow
-Start-Sleep -Seconds 5
-
-# Open browser
-Write-Host "`n========================================" -ForegroundColor Cyan
-Write-Host "  MVP Ready!" -ForegroundColor Green
-Write-Host "========================================" -ForegroundColor Cyan
-Write-Host ""
-Write-Host "  Frontend: http://localhost:3000" -ForegroundColor White
-Write-Host "  Backend:  http://127.0.0.1:8010" -ForegroundColor White
-Write-Host "  Neo4j:    http://localhost:7474" -ForegroundColor White
-Write-Host ""
-if ($EffectiveFakeMode) {
-    Write-Host "  Mode: FAKE (no Gemini API calls)" -ForegroundColor Yellow
-} else {
-    Write-Host "  Mode: REAL Gemini" -ForegroundColor Green
-}
-Write-Host ""
-Write-Host "  Press Ctrl+C to stop all services." -ForegroundColor Gray
-Write-Host ""
-
-# Open browser
-Start-Process "http://localhost:3000"
-
-# Wait for user interrupt
-try {
-    Write-Host "Services running. Waiting for Ctrl+C..." -ForegroundColor Gray
-    while ($true) {
-        Start-Sleep -Seconds 5
-        # Check if jobs are still running
-        if ($BackendJob.State -ne "Running") {
-            Write-Host "Backend stopped unexpectedly. Check logs." -ForegroundColor Red
-        }
-        if ($FrontendJob.State -ne "Running") {
-            Write-Host "Frontend stopped unexpectedly. Check logs." -ForegroundColor Red
-        }
-    }
+    [Console]::Error.WriteLine($_.Exception.Message)
+    exit 1
 } finally {
-    Write-Host "`nStopping services..." -ForegroundColor Yellow
-    Stop-Job $BackendJob -ErrorAction SilentlyContinue
-    Stop-Job $FrontendJob -ErrorAction SilentlyContinue
-    Remove-Job $BackendJob -ErrorAction SilentlyContinue
-    Remove-Job $FrontendJob -ErrorAction SilentlyContinue
-    Write-Host "Services stopped. Neo4j still running (stop with: docker compose -f docker/docker-compose.yml --env-file .env down)" -ForegroundColor Gray
+    foreach ($Job in $Jobs) {
+        Stop-Job $Job -ErrorAction SilentlyContinue
+        Remove-Job $Job -Force -ErrorAction SilentlyContinue
+    }
+    foreach ($Name in $OriginalEnvironment.Keys) {
+        [Environment]::SetEnvironmentVariable($Name, $OriginalEnvironment[$Name], "Process")
+    }
 }
-

@@ -68,6 +68,8 @@ GET /sessions
     {
       "id": "string",
       "name": "string",
+      "portrait_title": "string | null",
+      "language_variant": "en-GB",
       "created_at": "datetime",
       "ended_at": "datetime | null"
     }
@@ -88,6 +90,8 @@ GET /sessions/{session_id}
 {
   "id": "string",
   "name": "string",
+  "portrait_title": "string | null",
+  "language_variant": "en-GB",
   "created_at": "datetime",
   "ended_at": "datetime | null",
   "transcript": "string"
@@ -122,26 +126,21 @@ DELETE /sessions/{session_id}
 
 ---
 
-#### Rename Session
+#### Update Session
 
 ```
 PATCH /sessions/{session_id}
 ```
 
-**Request:**
+Supply `name`, `portrait_title`, or both. A null or blank portrait title restores the generated title on the canvas and in portrait PNGs.
+
 ```json
 {
-  "name": "string"
+  "portrait_title": "Coastal gardens"
 }
 ```
 
-**Response:** `200 OK`
-```json
-{
-  "id": "string",
-  "name": "string"
-}
-```
+A successful update returns `200 OK` with the updated session summary in the same shape as a list entry.
 
 ---
 
@@ -158,9 +157,12 @@ POST /sessions/{session_id}/chunks
 {
   "text": "string",
   "start_time": "float (seconds from session start)",
-  "end_time": "float"
+  "end_time": "float",
+  "client_request_id": "optional UUID"
 }
 ```
+
+Generate one request ID per recorded chunk. Retrying the same session, request ID, text and timestamps returns the original chunk ID. Reusing the ID with different content returns HTTP 409. Clients that omit the ID create a new chunk on each POST.
 
 **Response:** `202 Accepted`
 ```json
