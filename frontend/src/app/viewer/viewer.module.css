@@ -1,0 +1,69 @@
+.viewer {
+  max-width: 100rem;
+  margin: auto;
+  padding: clamp(1rem, 3vw, 3rem);
+  overflow-wrap: anywhere;
+}
+
+.viewer h1, .viewer h3 {
+  margin: 0;
+}
+
+.file {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  font-weight: 600;
+}
+
+.file input {
+  max-width: 100%;
+}
+
+.error {
+  color: var(--danger);
+}
+
+.columns {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(16rem, 1fr);
+  align-items: start;
+  gap: 1rem;
+}
+
+.map {
+  position: relative;
+}
+
+.map .canvas {
+  height: 65vh;
+  min-height: 22rem;
+}
+
+.empty {
+  position: absolute;
+  inset: 45% 3rem auto;
+  text-align: center;
+  pointer-events: none;
+}
+
+.transcript {
+  max-height: 65vh;
+  padding: 1rem;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+}
+
+.transcript p {
+  margin-bottom: 0;
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 48rem) {
+  .columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

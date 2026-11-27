@@ -16,6 +16,7 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import '../../nunito.css';
 
 import { GraphCanvas } from '../../../components/graph';
 import {

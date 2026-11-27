@@ -52,3 +52,5 @@ jobs:
         run: npm run test
       - name: Build
         run: npm run build
+      - name: Offline bundle viewer
+        run: npm run test:viewer
