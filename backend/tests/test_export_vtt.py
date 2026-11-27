@@ -14,27 +14,31 @@ from app.models import SessionSummary, TranscriptChunk
 
 @pytest.fixture
 async def client(monkeypatch):
-    speech = [
-        (0.125, 59.9996, "Can you hear me?\r\nYes, clearly.\n\nLet's begin."),
-        (59.9996, 3599.9996, "Read <b> & then &amp; aloud."),
-        (3599.9996, 3602.75, "One hour in."),
-    ]
-    chunks = {
+    speech = {
         "demo": [
-            TranscriptChunk(id=str(i), session_id="demo", start_time=start, end_time=end, text=text)
-            for i, (start, end, text) in enumerate(speech)
+            (0.125, 59.9996, "Can you hear me?\r\nYes, clearly.\n\nLet's begin."),
+            (59.9996, 3599.9996, "Read <b> & then &amp; aloud."),
+            (3599.9996, 3602.75, "One hour in."),
+        ],
+        "short": [
+            (59.9996, 60.0004, "Across the minute."),
+            (60.0, 60.0005, "At the minute."),
+            (3599.9996, 3600.0004, "Across the hour."),
         ],
         "empty": [],
     }
 
     async def get_session(session_id):
-        if session_id in chunks:
+        if session_id in speech:
             return SessionSummary(
                 id=session_id, name=session_id, created_at=datetime(2026, 1, 1, tzinfo=timezone.utc)
             )
 
     async def list_chunks(session_id):
-        return chunks[session_id]
+        return [
+            TranscriptChunk(id=str(i), session_id=session_id, start_time=start, end_time=end, text=text)
+            for i, (start, end, text) in enumerate(speech[session_id])
+        ]
 
     monkeypatch.setattr(export, "get_session_record", get_session)
     monkeypatch.setattr(export, "list_chunks_for_session", list_chunks)
@@ -47,14 +51,19 @@ async def demo_export(client):
     return await client.get("/api/sessions/demo/export/vtt")
 
 
+@pytest.fixture
+async def short_export(client):
+    return await client.get("/api/sessions/short/export/vtt")
+
+
 def test_boundary_timestamps(demo_export):
     assert demo_export.status_code == 200
     assert demo_export.headers["content-type"].split(";")[0] == "text/vtt"
     assert "00:01:00.000 --> 01:00:00.000" in demo_export.text.splitlines()
 
 
-async def read_player_cues(caption_file):
-    data = b64encode(caption_file.read_bytes()).decode("ascii")
+async def read_player_cues(vtt):
+    data = b64encode(vtt).decode("ascii")
     async with async_playwright() as playwright:
         browser = await playwright.chromium.launch()
         page = await browser.new_page(offline=True)
@@ -66,19 +75,31 @@ async def read_player_cues(caption_file):
         return cues
 
 
+def player_cues(vtt):
+    # The app's Windows selector loop cannot launch Playwright's subprocess.
+    loop_factory = asyncio.ProactorEventLoop if sys.platform == "win32" else asyncio.new_event_loop
+    with asyncio.Runner(loop_factory=loop_factory) as runner:
+        return runner.run(read_player_cues(vtt))
+
+
 def test_exported_cues_load_in_player(demo_export, tmp_path):
     caption_file = tmp_path / "captions.vtt"
     caption_file.write_bytes(demo_export.content)
     print(f"Caption playback file: {caption_file}")
 
-    # The app's Windows selector loop cannot launch Playwright's subprocess.
-    loop_factory = asyncio.ProactorEventLoop if sys.platform == "win32" else asyncio.new_event_loop
-    with asyncio.Runner(loop_factory=loop_factory) as runner:
-        cues = runner.run(read_player_cues(caption_file))
-    assert cues == [
+    assert player_cues(caption_file.read_bytes()) == [
         [0.125, 60, "Can you hear me?\nYes, clearly.\n\nLet's begin."],
         [60, 3600, "Read <b> & then &amp; aloud."],
         [3600, 3602.75, "One hour in."],
+    ]
+
+
+def test_positive_cues_that_round_to_one_timestamp(short_export):
+    assert short_export.status_code == 200
+    assert player_cues(short_export.content) == [
+        [60, 60.001, "Across the minute."],
+        [60, 60.001, "At the minute."],
+        [3600, 3600.001, "Across the hour."],
     ]
 
 

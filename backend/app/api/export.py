@@ -128,9 +128,11 @@ async def export_vtt(session_id: str = Path(..., description="Session identifier
 
     vtt_lines = ["WEBVTT", ""]
     for chunk in chunks:
-        start = _format_vtt_time(chunk.start_time)
-        end = _format_vtt_time(chunk.end_time)
-        vtt_lines.append(f"{start} --> {end}")
+        start_ms = round(chunk.start_time * 1000)
+        end_ms = round(chunk.end_time * 1000)
+        if chunk.end_time > chunk.start_time and end_ms == start_ms:
+            end_ms += 1
+        vtt_lines.append(f"{_format_vtt_time(start_ms)} --> {_format_vtt_time(end_ms)}")
         text = escape(chunk.text, quote=False).replace("\r\n", "\n").replace("\r", "\n")
         # A physical empty line ends a cue. Encode breaks that would create one.
         vtt_lines.append(re.sub(r"^\n|\n\Z", "&#10;", text, flags=re.MULTILINE))
@@ -143,9 +145,9 @@ async def export_vtt(session_id: str = Path(..., description="Session identifier
     )
 
 
-def _format_vtt_time(seconds: float) -> str:
-    """Convert seconds to VTT timestamp format (HH:MM:SS.mmm)."""
-    whole_seconds, milliseconds = divmod(round(seconds * 1000), 1000)
+def _format_vtt_time(total_milliseconds: int) -> str:
+    """Convert whole milliseconds to a VTT timestamp (HH:MM:SS.mmm)."""
+    whole_seconds, milliseconds = divmod(total_milliseconds, 1000)
     whole_minutes, seconds_in_minute = divmod(whole_seconds, 60)
     hours, minutes = divmod(whole_minutes, 60)
     return f"{hours:02d}:{minutes:02d}:{seconds_in_minute:02d}.{milliseconds:03d}"

@@ -17,6 +17,8 @@ Run the offline example. It requests `GET /api/sessions/demo/export/vtt` with th
 python -m pytest -q -s tests/test_export_vtt.py
 ```
 
+The playback tests also cover positive-duration cues whose endpoints round to the same millisecond. Each starts at the rounded timestamp and ends one millisecond later.
+
 To watch the hour change, open a terminal in the directory printed after `Caption playback file`. Use FFmpeg with its `subtitles` filter to make a five-second preview.
 
 ```sh
