@@ -29,8 +29,13 @@ Open [empty.json](fixtures/empty.json) to clear the graph and transcript.
 ## Offline browser regression
 
 With the frontend dependencies and Chrome installed, run these commands from
-`frontend`. The browser test starts its own local production frontend, blocks
-service requests and takes the browser offline before selecting files.
+`frontend`. The tests start a local production frontend and take Chrome
+offline before selecting files. The home-page test serves a mock font
+stylesheet and checks that opening a Cyrillic transcript requests no font.
+The direct viewer tests check the bridge, the label on a flower with no
+members, recovery from invalid files and clearing the canvas with an empty
+export. Each test checks that file selection makes no requests and leaves
+browser storage empty.
 
 ```sh
 npm run build

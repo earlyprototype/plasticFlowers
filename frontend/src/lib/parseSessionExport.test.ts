@@ -18,6 +18,18 @@ describe('parseSessionExport', () => {
     expect(parseSessionExport(JSON.stringify(bundle)).graph.nodes[0].status).toBe('legacy');
   });
 
+  it.each(['  ', '\t\n', '\u00a0'])('rejects a whitespace-only graph ID (%j)', (id) => {
+    const bundle = structuredClone(garden);
+    bundle.graph.relationships[0].id = id;
+    expect(() => parseSessionExport(JSON.stringify(bundle))).toThrow(/graph\.relationships\.0\.id.*non-whitespace/i);
+  });
+
+  it('preserves whitespace around a valid ID', () => {
+    const bundle = structuredClone(garden);
+    bundle.graph.relationships[0].id = '  grows  ';
+    expect(parseSessionExport(JSON.stringify(bundle)).graph.relationships[0].id).toBe('  grows  ');
+  });
+
   it.each([null, '2026-06-01T10:00:00.123456+01:00'])('preserves last_active %s', (last_active) => {
     const bundle = structuredClone(garden);
     Object.assign(bundle.graph.nodes[0], { last_active });

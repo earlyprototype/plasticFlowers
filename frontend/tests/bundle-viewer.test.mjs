@@ -8,7 +8,7 @@ import { chromium } from 'playwright-core';
 
 const fixture = (name) => fileURLToPath(new URL('../fixtures/' + name, import.meta.url));
 
-test('opens export files offline, preserves a valid view on error, and clears the canvas', async (t) => {
+async function openViewer(t, { viaHome = false } = {}) {
   const app = next({ dev: false, hostname: '127.0.0.1', port: 0 });
   await app.prepare();
   const server = createServer(app.getRequestHandler());
@@ -35,8 +35,15 @@ test('opens export files offline, preserves a valid view on error, and clears th
   await context.route('**/*', (route) => {
     const request = route.request();
     const url = new URL(request.url());
-    const asset = url.pathname === '/viewer' || url.pathname.startsWith('/_next/static/') ||
-      url.pathname === '/favicon.ico';
+    if (viaHome && !openingFiles && page.url() === origin + '/' && url.hostname === 'fonts.googleapis.com') {
+      // Only Cyrillic text can trigger this font download. Serve the stylesheet locally.
+      return route.fulfill({
+        contentType: 'text/css',
+        body: "@font-face { font-family: Nunito; src: url('https://fonts.gstatic.com/test-cyrillic.woff2'); unicode-range: U+0400-04FF; }",
+      });
+    }
+    const asset = (viaHome && url.pathname === '/') || url.pathname === '/viewer' ||
+      url.pathname.startsWith('/_next/static/') || url.pathname === '/favicon.ico';
     if (!openingFiles && url.origin === origin && request.method() === 'GET' && asset) {
       return route.continue();
     }
@@ -44,12 +51,41 @@ test('opens export files offline, preserves a valid view on error, and clears th
     return route.abort();
   });
 
-  const response = await page.goto(origin + '/viewer', { waitUntil: 'networkidle' });
+  const response = await page.goto(viaHome ? origin : origin + '/viewer', { waitUntil: 'networkidle' });
   assert.equal(response.status(), 200);
+  if (viaHome) {
+    await page.getByRole('link', { name: 'Open exported conversation' }).click();
+    await page.waitForURL(origin + '/viewer', { waitUntil: 'networkidle' });
+  }
   const input = page.getByLabel('Open JSON export');
   await input.waitFor();
   openingFiles = true;
   await context.setOffline(true);
+
+  async function assertNoWritesOrRequests() {
+    assert.deepEqual(await page.evaluate(async () => [
+      localStorage.length, sessionStorage.length, (await indexedDB.databases()).length,
+    ]), [0, 0, 0]);
+    assert.deepEqual(requests, []);
+    assert.deepEqual(errors, []);
+  }
+  return { page, input, assertNoWritesOrRequests };
+}
+
+test('the home-page link opens a Unicode transcript without fetching a font', async (t) => {
+  const { page, input, assertNoWritesOrRequests } = await openViewer(t, { viaHome: true });
+  const bundle = JSON.parse(await readFile(fixture('empty.json'), 'utf8'));
+  bundle.session.transcript = 'Базилик растёт на крыше.';
+  await input.setInputFiles({
+    name: 'garden.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(bundle)),
+  });
+  await page.getByRole('region', { name: 'Transcript' }).getByText(bundle.session.transcript).waitFor();
+  await page.evaluate(() => document.fonts.ready.then(() => undefined));
+  await assertNoWritesOrRequests();
+});
+
+test('opens export files offline, preserves a valid view on error, and clears the canvas', async (t) => {
+  const { page, input, assertNoWritesOrRequests } = await openViewer(t);
   await input.setInputFiles(fixture('rooftop-garden.json'));
   const transcript = page.getByRole('region', { name: 'Transcript' });
   const text = 'The rooftop beds hold basil. The downspout fills the rain barrel.\nBarrel water feeds the basil roots.';
@@ -93,6 +129,7 @@ test('opens export files offline, preserves a valid view on error, and clears th
 
   const garden = JSON.parse(await readFile(fixture('rooftop-garden.json'), 'utf8'));
   for (const [change, error] of [
+    [({ graph }) => graph.nodes.push({ ...graph.nodes[0], id: '  ', flower_id: null }), /graph\.nodes\.4\.id.*non-whitespace/i],
     [({ graph }) => graph.flowers[0].member_ids.push('missing-member'), /garden.*member.*missing-member/i],
     [({ graph }) => graph.flowers[0].member_ids.push('barrel'), /garden.*member.*barrel/i],
     [({ graph }) => { graph.flowers[0].member_ids = ['roof']; }, /garden.*missing.*roots/i],
@@ -126,9 +163,32 @@ test('opens export files offline, preserves a valid view on error, and clears th
   assert.equal(await viewport.evaluate((el) => el._cyreg.cy.elements().length), 0);
   assert.equal(await transcript.getByText('No transcript in this export.').count(), 1);
   assert.equal(await page.getByRole('main').getByRole('alert').count(), 0);
-  assert.deepEqual(await page.evaluate(async () => [
-    localStorage.length, sessionStorage.length, (await indexedDB.databases()).length,
-  ]), [0, 0, 0]);
-  assert.deepEqual(requests, []);
-  assert.deepEqual(errors, []);
+  await assertNoWritesOrRequests();
+});
+
+test('paints the name of a flower with no members at its own position', async (t) => {
+  const { page, input, assertNoWritesOrRequests } = await openViewer(t);
+  const fresh = JSON.parse(await readFile(fixture('empty.json'), 'utf8'));
+  const garden = JSON.parse(await readFile(fixture('rooftop-garden.json'), 'utf8'));
+  fresh.graph.flowers.push({ ...garden.graph.flowers[0], member_ids: [], stem_node_id: '', edge_count: 0 });
+  await input.setInputFiles({
+    name: 'fresh-flower.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(fresh)),
+  });
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.graph-canvas__viewport');
+    const flower = el?._cyreg?.cy.nodes('.flower');
+    if (flower?.length !== 1 || flower.style('label') !== 'Rooftop garden (0)') return false;
+    // This map has only one label. Look for painted ink at the flower's fitted position.
+    const { x, y } = flower.renderedPosition();
+    if (x < 20 || x > el.clientWidth - 20 || y < 8 || y > el.clientHeight - 8) return false;
+    return Array.from(el.querySelectorAll('canvas')).some((canvas) => {
+      const { data } = canvas.getContext('2d').getImageData(x - 20, y - 8, 40, 16);
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] < 128 && data[i + 1] < 128 && data[i + 3] > 128) return true;
+      }
+      return false;
+    });
+  });
+
+  await assertNoWritesOrRequests();
 });

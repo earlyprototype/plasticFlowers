@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { SessionExportBundle } from './types';
 
-const id = z.string().min(1);
+const id = z.string().regex(/\S/, 'Expected an ID with at least one non-whitespace character');
 const date = z.string()
   .datetime({ local: true, offset: true, message: 'Expected a valid ISO timestamp' })
   // Python datetimes start at year 1. Date.parse also checks the offset range.
