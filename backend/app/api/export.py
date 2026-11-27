@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
+from html import escape
 from typing import List
 
 from fastapi import APIRouter, HTTPException, Path, status
@@ -129,7 +130,7 @@ async def export_vtt(session_id: str = Path(..., description="Session identifier
         start = _format_vtt_time(chunk.start_time)
         end = _format_vtt_time(chunk.end_time)
         vtt_lines.append(f"{start} --> {end}")
-        vtt_lines.append(chunk.text)
+        vtt_lines.append(escape(chunk.text, quote=False))
         vtt_lines.append("")
 
     return PlainTextResponse(
@@ -141,10 +142,10 @@ async def export_vtt(session_id: str = Path(..., description="Session identifier
 
 def _format_vtt_time(seconds: float) -> str:
     """Convert seconds to VTT timestamp format (HH:MM:SS.mmm)."""
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = seconds % 60
-    return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
+    whole_seconds, milliseconds = divmod(round(seconds * 1000), 1000)
+    whole_minutes, seconds_in_minute = divmod(whole_seconds, 60)
+    hours, minutes = divmod(whole_minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds_in_minute:02d}.{milliseconds:03d}"
 
 
 @router.get(

@@ -38,6 +38,8 @@ Works on Windows, macOS, and Linux. You'll need Docker (Desktop or Engine), Node
 
 To verify the stack end to end, there's a smoke test (`python backend/scripts/smoke_test.py`) and a full walkthrough in the runbook at `_docs/_runbook/MVP_DEMO.md`.
 
+Before the first `make test`, install headless Chromium in the backend development environment. See the [offline caption playback example](backend/README.md#play-a-session-caption-export).
+
 ## How it's built
 
 - **`backend/`** — a FastAPI service running two agents: a **Builder** that extracts entities and relationships from the incoming speech, and a **Gardener** that continuously reorganises the graph as it grows.
