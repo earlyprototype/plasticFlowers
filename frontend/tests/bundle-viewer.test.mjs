@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
@@ -81,11 +82,30 @@ test('opens export files offline, preserves a valid view on error, and clears th
     return bridge.hasClass('hovered') && bridge.style('label') === 'waters roots';
   });
 
-  for (const [content, error] of [['{', /valid JSON/i], ['{}', /session/i]]) {
+  async function checkRejected(content, error) {
     await input.setInputFiles({ name: 'broken.json', mimeType: 'application/json', buffer: Buffer.from(content) });
     await page.getByRole('alert').filter({ hasText: error }).waitFor();
     assert.deepEqual(await inspectGraph(), expected);
     assert.equal(await transcript.locator('p').textContent(), text);
+  }
+  await checkRejected('{', /valid JSON/i);
+  await checkRejected('{}', /session/i);
+
+  const garden = JSON.parse(await readFile(fixture('rooftop-garden.json'), 'utf8'));
+  for (const [change, error] of [
+    [(g) => g.flowers[0].member_ids.push('missing-member'), /garden.*member.*missing-member/i],
+    [(g) => g.flowers[0].member_ids.push('barrel'), /garden.*member.*barrel/i],
+    [(g) => { g.flowers[0].stem_node_id = 'missing-stem'; }, /garden.*stem.*missing-stem/i],
+    [(g) => { g.flowers[0].stem_node_id = 'barrel'; }, /garden.*stem.*barrel/i],
+    [(g) => { g.relationships[2].description = ''; }, /graph\.relationships\.2\.description.*2.*80/i],
+    [(g) => { g.flowers[0].label = ''; }, /graph\.flowers\.0\.label.*2.*64/i],
+  ]) {
+    const invalid = structuredClone(garden);
+    // Make partial replacement of either the graph or the transcript observable.
+    invalid.graph.flowers[1].label = 'Replacement flower';
+    invalid.session.transcript = 'Replacement transcript';
+    change(invalid.graph);
+    await checkRejected(JSON.stringify(invalid), error);
   }
 
   await input.setInputFiles(fixture('empty.json'));

@@ -19,7 +19,8 @@ relationship from Rain barrel to Basil roots. The JSON exporter leaves
 `graph.bridges` empty. The canvas identifies bridges from the flower
 membership of the relationship's endpoints.
 
-Opening malformed JSON shows an error and keeps the displayed session.
+If a file contains invalid JSON, an invalid field or a bad flower reference,
+the viewer shows the error and keeps the previous graph and transcript.
 Open [empty.json](fixtures/empty.json) to clear the graph and transcript.
 
 ## Offline browser regression

@@ -5,6 +5,14 @@ const id = z.string().min(1);
 const date = z.string().refine((value) => Number.isFinite(Date.parse(value)), 'Expected a date');
 const confidence = z.number().min(0).max(1);
 
+function graphText(maxLength: number) {
+  return z.string().refine((value) => {
+    // The exporter's length limits count Unicode code points.
+    const length = Array.from(value).length;
+    return length >= 2 && length <= maxLength;
+  }, `Expected 2 to ${maxLength} characters`);
+}
+
 const node = z.object({
   id,
   label: z.string(),
@@ -23,7 +31,7 @@ const relationship = z.object({
   source_id: id,
   target_id: id,
   category: z.enum(['CAUSAL', 'STRUCTURAL', 'COMPARATIVE', 'TEMPORAL', 'ASSOCIATIVE']),
-  description: z.string(),
+  description: graphText(80),
   confidence,
   evidence: z.string(),
   source: z.enum(['builder', 'gardener']),
@@ -38,7 +46,7 @@ const bundle = z.object({
     nodes: z.array(node),
     relationships: z.array(relationship),
     flowers: z.array(z.object({
-      id, label: z.string(), stem_node_id: z.string(), member_ids: z.array(id),
+      id, label: graphText(64), stem_node_id: z.string(), member_ids: z.array(id),
       edge_count: z.number().int().nonnegative(), created_at: date,
     })),
     bridges: z.array(z.object({
@@ -74,10 +82,22 @@ export function parseSessionExport(text: string): SessionExportBundle {
       throw new Error(`Node "${node.id}" refers to missing flower "${node.flower_id}".`);
     }
   }
-  const nodeIds = new Set(nodes.map((node) => node.id));
+  const nodesById = new Map(nodes.map((node) => [node.id, node]));
+  for (const flower of flowers) {
+    for (const memberId of flower.member_ids) {
+      const member = nodesById.get(memberId);
+      if (!member) throw new Error(`Flower "${flower.id}" lists missing member "${memberId}".`);
+      if (member.flower_id !== flower.id) {
+        throw new Error(`Flower "${flower.id}" lists member "${memberId}", which does not belong to it.`);
+      }
+    }
+    if (flower.stem_node_id && !flower.member_ids.includes(flower.stem_node_id)) {
+      throw new Error(`Flower "${flower.id}" names stem "${flower.stem_node_id}" outside its member list.`);
+    }
+  }
   for (const edge of relationships) {
     for (const endpoint of [edge.source_id, edge.target_id]) {
-      if (!nodeIds.has(endpoint)) {
+      if (!nodesById.has(endpoint)) {
         throw new Error(`Relationship "${edge.id}" refers to missing node "${endpoint}".`);
       }
     }
