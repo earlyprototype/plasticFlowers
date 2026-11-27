@@ -15,7 +15,7 @@ from app.models import SessionSummary, TranscriptChunk
 @pytest.fixture
 async def client(monkeypatch):
     speech = [
-        (0.125, 59.9996, "Can you hear me?\nYes, clearly."),
+        (0.125, 59.9996, "Can you hear me?\r\nYes, clearly.\n\nLet's begin."),
         (59.9996, 3599.9996, "Read <b> & then &amp; aloud."),
         (3599.9996, 3602.75, "One hour in."),
     ]
@@ -76,7 +76,7 @@ def test_exported_cues_load_in_player(demo_export, tmp_path):
     with asyncio.Runner(loop_factory=loop_factory) as runner:
         cues = runner.run(read_player_cues(caption_file))
     assert cues == [
-        [0.125, 60, "Can you hear me?\nYes, clearly."],
+        [0.125, 60, "Can you hear me?\nYes, clearly.\n\nLet's begin."],
         [60, 3600, "Read <b> & then &amp; aloud."],
         [3600, 3602.75, "One hour in."],
     ]
@@ -86,7 +86,7 @@ async def test_empty_session_exports_header_only(client):
     response = await client.get("/api/sessions/empty/export/vtt")
     assert response.status_code == 200
     assert response.headers["content-type"].split(";")[0] == "text/vtt"
-    assert response.text == "WEBVTT\n"
+    assert response.content == b"WEBVTT\n\n"
 
 
 async def test_missing_session_returns_404(client):

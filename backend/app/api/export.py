@@ -8,6 +8,7 @@ Spec references:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
 from html import escape
 from typing import List
@@ -130,11 +131,13 @@ async def export_vtt(session_id: str = Path(..., description="Session identifier
         start = _format_vtt_time(chunk.start_time)
         end = _format_vtt_time(chunk.end_time)
         vtt_lines.append(f"{start} --> {end}")
-        vtt_lines.append(escape(chunk.text, quote=False))
+        text = escape(chunk.text, quote=False).replace("\r\n", "\n").replace("\r", "\n")
+        # A physical empty line ends a cue. Encode breaks that would create one.
+        vtt_lines.append(re.sub(r"^\n|\n\Z", "&#10;", text, flags=re.MULTILINE))
         vtt_lines.append("")
 
     return PlainTextResponse(
-        content="\n".join(vtt_lines),
+        content="\n".join(vtt_lines) + "\n",
         media_type="text/vtt",
         headers={"Content-Disposition": f'attachment; filename="{session_id}_transcript.vtt"'},
     )

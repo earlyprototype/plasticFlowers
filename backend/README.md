@@ -11,7 +11,7 @@ python -m pip install -e ".[dev]"
 python -m playwright install --with-deps --only-shell chromium
 ```
 
-Run the offline example. It requests `GET /api/sessions/demo/export/vtt` with three synthetic transcript chunks, saves the response as `captions.vtt`, and loads the file into a Chromium video caption track.
+Run the offline example. It requests `GET /api/sessions/demo/export/vtt` with three synthetic transcript chunks, saves the response as `captions.vtt`, and loads the file into a Chromium video caption track. The first cue includes a blank line before its final sentence.
 
 ```sh
 python -m pytest -q -s tests/test_export_vtt.py
