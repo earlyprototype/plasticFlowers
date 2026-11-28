@@ -19,6 +19,8 @@ python -m pytest -q -s tests/test_export_vtt.py
 
 Each exported cue lasts at least one millisecond, including chunks with identical start and end times. If consecutive chunks were disjoint, the next cue starts at or after the previous cue's exported end. For example, chunks spanning 59.9996 to 60 and 60 to 62 seconds play from 60.000 to 60.001 and from 60.001 to 62.000 seconds.
 
+Overlapping cues can share a start time. If rounding gives them the same start and the second cue ends later, the export advances its start by one millisecond to keep transcript order. For example, chunks spanning 59.9996 to 60.600 and 60.0001 to 62.000 seconds play from 60.000 to 60.600 and from 60.001 to 62.000 seconds.
+
 To watch the hour change, open a terminal in the directory printed after `Caption playback file`. Use FFmpeg with its `subtitles` filter to make a five-second preview.
 
 ```sh

@@ -40,6 +40,16 @@ async def client(monkeypatch):
             (59.9997, 59.9998, "Another short cue."),
             (59.99975, 59.9999, "Overlapping speech."),
         ],
+        "overlap": [
+            (59.9996, 60.6, "First"),
+            (60.0001, 62.0, "Second"),
+        ],
+        "overlap_chain": [
+            (59.9996, 60.750, "First."),
+            (60.0001, 62.0, "Second."),
+            (60.0002, 61.0, "Third."),
+            (60.0003, 63.0, "Fourth."),
+        ],
         "empty": [],
     }
 
@@ -154,6 +164,27 @@ def test_positive_cues_that_round_to_one_timestamp(short_export):
     indirect=["boundary_export"],
 )
 def test_short_cues_load_in_player(boundary_export, expected):
+    assert boundary_export.status_code == 200
+    assert player_cues(boundary_export.content) == expected
+
+
+@pytest.mark.parametrize(
+    "boundary_export, expected",
+    [
+        ("overlap", [[60, 60.6, "First"], [60.001, 62, "Second"]]),
+        (
+            "overlap_chain",
+            [
+                [60, 60.750, "First."],
+                [60.001, 62, "Second."],
+                [60.001, 61, "Third."],
+                [60.002, 63, "Fourth."],
+            ],
+        ),
+    ],
+    indirect=["boundary_export"],
+)
+def test_overlapping_cues_keep_transcript_order_in_player(boundary_export, expected):
     assert boundary_export.status_code == 200
     assert player_cues(boundary_export.content) == expected
 
