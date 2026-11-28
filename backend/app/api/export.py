@@ -127,11 +127,17 @@ async def export_vtt(session_id: str = Path(..., description="Session identifier
     chunks = await list_chunks_for_session(session_id)
 
     vtt_lines = ["WEBVTT", ""]
+    previous_source_end = 0.0
+    earliest_start_ms = 0
+    end_ms = 0
     for chunk in chunks:
-        start_ms = round(chunk.start_time * 1000)
-        end_ms = round(chunk.end_time * 1000)
-        if chunk.end_time > chunk.start_time and end_ms == start_ms:
-            end_ms += 1
+        # Overlapping speech can share a start. Disjoint speech must wait for
+        # the previous cue's minimum display time.
+        if chunk.start_time >= previous_source_end:
+            earliest_start_ms = end_ms
+        start_ms = max(round(chunk.start_time * 1000), earliest_start_ms)
+        end_ms = max(round(chunk.end_time * 1000), start_ms + 1)
+        previous_source_end = chunk.end_time
         vtt_lines.append(f"{_format_vtt_time(start_ms)} --> {_format_vtt_time(end_ms)}")
         text = escape(chunk.text, quote=False).replace("\r\n", "\n").replace("\r", "\n")
         # A physical empty line ends a cue. Encode breaks that would create one.

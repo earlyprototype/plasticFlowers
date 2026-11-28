@@ -25,6 +25,21 @@ async def client(monkeypatch):
             (60.0, 60.0005, "At the minute."),
             (3599.9996, 3600.0004, "Across the hour."),
         ],
+        "adjacent": [
+            (59.9996, 60.0, "First minute cue."),
+            (60.0, 62.0, "Second minute cue."),
+            (3599.9996, 3600.0, "First hour cue."),
+            (3600.0, 3602.0, "Second hour cue."),
+        ],
+        "fractional": [
+            (59.9996, 60.0004, "First."),
+            (60.0004, 62.0, "Second."),
+        ],
+        "instant": [
+            (59.9996, 59.9996, "Instant."),
+            (59.9997, 59.9998, "Another short cue."),
+            (59.99975, 59.9999, "Overlapping speech."),
+        ],
         "empty": [],
     }
 
@@ -54,6 +69,11 @@ async def demo_export(client):
 @pytest.fixture
 async def short_export(client):
     return await client.get("/api/sessions/short/export/vtt")
+
+
+@pytest.fixture
+async def boundary_export(client, request):
+    return await client.get(f"/api/sessions/{request.param}/export/vtt")
 
 
 def test_boundary_timestamps(demo_export):
@@ -101,6 +121,41 @@ def test_positive_cues_that_round_to_one_timestamp(short_export):
         [60, 60.001, "At the minute."],
         [3600, 3600.001, "Across the hour."],
     ]
+
+
+@pytest.mark.parametrize(
+    "boundary_export, expected",
+    [
+        pytest.param(
+            "adjacent",
+            [
+                [60, 60.001, "First minute cue."],
+                [60.001, 62, "Second minute cue."],
+                [3600, 3600.001, "First hour cue."],
+                [3600.001, 3602, "Second hour cue."],
+            ],
+            id="adjacent-at-minute-and-hour",
+        ),
+        pytest.param(
+            "fractional",
+            [[60, 60.001, "First."], [60.001, 62, "Second."]],
+            id="adjacent-at-fractional-boundary",
+        ),
+        pytest.param(
+            "instant",
+            [
+                [60, 60.001, "Instant."],
+                [60.001, 60.002, "Another short cue."],
+                [60.001, 60.002, "Overlapping speech."],
+            ],
+            id="equal-endpoints-and-submillisecond-gap",
+        ),
+    ],
+    indirect=["boundary_export"],
+)
+def test_short_cues_load_in_player(boundary_export, expected):
+    assert boundary_export.status_code == 200
+    assert player_cues(boundary_export.content) == expected
 
 
 async def test_empty_session_exports_header_only(client):

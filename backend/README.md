@@ -17,7 +17,7 @@ Run the offline example. It requests `GET /api/sessions/demo/export/vtt` with th
 python -m pytest -q -s tests/test_export_vtt.py
 ```
 
-The playback tests also cover positive-duration cues whose endpoints round to the same millisecond. Each starts at the rounded timestamp and ends one millisecond later.
+Each exported cue lasts at least one millisecond, including chunks with identical start and end times. If consecutive chunks were disjoint, the next cue starts at or after the previous cue's exported end. For example, chunks spanning 59.9996 to 60 and 60 to 62 seconds play from 60.000 to 60.001 and from 60.001 to 62.000 seconds.
 
 To watch the hour change, open a terminal in the directory printed after `Caption playback file`. Use FFmpeg with its `subtitles` filter to make a five-second preview.
 
