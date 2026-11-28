@@ -8,7 +8,9 @@ Spec references:
 from __future__ import annotations
 
 import logging
+import re
 from datetime import datetime, timezone
+from html import escape
 from typing import List
 
 from fastapi import APIRouter, HTTPException, Path, status
@@ -125,26 +127,41 @@ async def export_vtt(session_id: str = Path(..., description="Session identifier
     chunks = await list_chunks_for_session(session_id)
 
     vtt_lines = ["WEBVTT", ""]
+    previous_source_end = float("-inf")
+    previous_start_ms = 0
+    previous_end_ms = 0
     for chunk in chunks:
-        start = _format_vtt_time(chunk.start_time)
-        end = _format_vtt_time(chunk.end_time)
-        vtt_lines.append(f"{start} --> {end}")
-        vtt_lines.append(chunk.text)
+        rounded_end_ms = round(chunk.end_time * 1000)
+        earliest_start_ms = previous_start_ms
+        if chunk.start_time >= previous_source_end:
+            earliest_start_ms = previous_end_ms
+        elif rounded_end_ms > previous_end_ms:
+            # Players put the later end first when starts tie.
+            earliest_start_ms = previous_start_ms + 1
+        start_ms = max(round(chunk.start_time * 1000), earliest_start_ms)
+        end_ms = max(rounded_end_ms, start_ms + 1)
+        previous_source_end = chunk.end_time
+        previous_start_ms = start_ms
+        previous_end_ms = end_ms
+        vtt_lines.append(f"{_format_vtt_time(start_ms)} --> {_format_vtt_time(end_ms)}")
+        text = escape(chunk.text, quote=False).replace("\r\n", "\n").replace("\r", "\n")
+        # A physical empty line ends a cue. Encode breaks that would create one.
+        vtt_lines.append(re.sub(r"^\n|\n\Z", "&#10;", text, flags=re.MULTILINE))
         vtt_lines.append("")
 
     return PlainTextResponse(
-        content="\n".join(vtt_lines),
+        content="\n".join(vtt_lines) + "\n",
         media_type="text/vtt",
         headers={"Content-Disposition": f'attachment; filename="{session_id}_transcript.vtt"'},
     )
 
 
-def _format_vtt_time(seconds: float) -> str:
-    """Convert seconds to VTT timestamp format (HH:MM:SS.mmm)."""
-    hours = int(seconds // 3600)
-    minutes = int((seconds % 3600) // 60)
-    secs = seconds % 60
-    return f"{hours:02d}:{minutes:02d}:{secs:06.3f}"
+def _format_vtt_time(total_milliseconds: int) -> str:
+    """Convert whole milliseconds to a VTT timestamp (HH:MM:SS.mmm)."""
+    whole_seconds, milliseconds = divmod(total_milliseconds, 1000)
+    whole_minutes, seconds_in_minute = divmod(whole_seconds, 60)
+    hours, minutes = divmod(whole_minutes, 60)
+    return f"{hours:02d}:{minutes:02d}:{seconds_in_minute:02d}.{milliseconds:03d}"
 
 
 @router.get(
